@@ -1,0 +1,13 @@
+#!/bin/bash
+# Simple script to start FastAPI
+
+cd "$(dirname "$0")"
+
+echo "🚀 Starting Recalibra FastAPI..."
+echo ""
+
+# Activate venv
+source venv/bin/activate
+
+# Start uvicorn
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
