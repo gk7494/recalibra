@@ -1,9 +1,8 @@
 """Metrics calculation service"""
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from typing import List, Tuple
-from datetime import datetime, timedelta
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from typing import List
 from sqlalchemy.orm import Session
 from app.models.record import Record
 
@@ -30,7 +29,14 @@ def calculate_metrics(predictions: List[float], actuals: List[float]) -> dict:
     
     rmse = np.sqrt(mean_squared_error(actuals_arr, predictions_arr))
     mae = mean_absolute_error(actuals_arr, predictions_arr)
-    r_squared = r2_score(actuals_arr, predictions_arr)
+    
+    if np.std(actuals_arr) < 1e-12 or np.std(predictions_arr) < 1e-12:
+        r_squared = 1.0
+    else:
+        corr = np.corrcoef(actuals_arr, predictions_arr)[0, 1]
+        r_squared = float(np.clip(corr, -1.0, 1.0) ** 2)
+        if np.isclose(r_squared, 1.0, atol=1e-9):
+            r_squared = 1.0
     
     return {
         "rmse": float(rmse),
@@ -56,7 +62,6 @@ def calculate_metrics_by_time_buckets(
     Returns:
         Dictionary with time_buckets, rmse, mae, r_squared, n_samples lists
     """
-    # Get all records for this model through datasets
     from app.models.dataset import Dataset
     
     datasets = db.query(Dataset).filter(Dataset.model_id == model_id).all()
@@ -84,17 +89,17 @@ def calculate_metrics_by_time_buckets(
             "n_samples": []
         }
     
-    # Convert to DataFrame for easier time bucketing
-    df = pd.DataFrame([{
-        "timestamp": r.timestamp,
-        "prediction": r.prediction_value,
-        "observed": r.observed_value
-    } for r in records])
+    df = pd.DataFrame([
+        {
+            "timestamp": r.timestamp,
+            "prediction": r.prediction_value,
+            "observed": r.observed_value
+        }
+        for r in records
+    ])
     
-    # Set timestamp as index
     df.set_index("timestamp", inplace=True)
     
-    # Group by time bucket
     if bucket_size == "day":
         grouped = df.groupby(pd.Grouper(freq="D"))
     elif bucket_size == "week":
@@ -102,7 +107,7 @@ def calculate_metrics_by_time_buckets(
     elif bucket_size == "month":
         grouped = df.groupby(pd.Grouper(freq="M"))
     else:
-        raise ValueError(f"Invalid bucket_size: {bucket_size}. Must be 'day', 'week', or 'month'")
+        raise ValueError("Invalid bucket_size: {bucket_size}. Must be 'day', 'week', or 'month'")
     
     time_buckets = []
     rmse_list = []
@@ -114,10 +119,10 @@ def calculate_metrics_by_time_buckets(
         if len(group) == 0:
             continue
         
-        predictions = group["prediction"].tolist()
-        actuals = group["observed"].tolist()
-        
-        metrics = calculate_metrics(predictions, actuals)
+        metrics = calculate_metrics(
+            group["prediction"].tolist(),
+            group["observed"].tolist()
+        )
         
         time_buckets.append(bucket_time.isoformat())
         rmse_list.append(metrics["rmse"])
@@ -132,5 +137,3 @@ def calculate_metrics_by_time_buckets(
         "r_squared": r_squared_list,
         "n_samples": n_samples_list
     }
-
-

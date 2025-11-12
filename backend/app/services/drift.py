@@ -2,41 +2,63 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import ks_2samp
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple
 from sqlalchemy.orm import Session
 from app.db.models import ModelPrediction, AssayResult
 from app.core.config import settings
 
 
-def compute_psi(expected: np.ndarray, actual: np.ndarray, bins: int = 10) -> float:
-    """Population Stability Index between two distributions"""
-    if len(expected) == 0 or len(actual) == 0:
+
+
+def kolmogorov_smirnov_test(baseline: List[float], recent: List[float]) -> Tuple[float, float]:
+    """Wrapper around scipy's KS test returning floats."""
+    baseline_arr = np.array(baseline)
+    recent_arr = np.array(recent)
+    stat, p_value = ks_2samp(baseline_arr, recent_arr)
+    return float(stat), float(p_value)
+
+
+def population_stability_index(baseline: List[float], recent: List[float], bins: int = 10) -> float:
+    """Convenience wrapper that reuses compute_psi for tests."""
+    return float(compute_psi(np.array(baseline), np.array(recent), bins=bins))
+
+
+def kl_divergence(baseline: List[float], recent: List[float], bins: int = 10) -> float:
+    """Simple KL divergence between histograms of two distributions."""
+    baseline_arr = np.array(baseline)
+    recent_arr = np.array(recent)
+
+    if baseline_arr.size == 0 or recent_arr.size == 0:
         return 0.0
-    
-    # Create bins based on combined range
-    min_val = min(expected.min(), actual.min())
-    max_val = max(expected.max(), actual.max())
-    
+
+    min_val = min(baseline_arr.min(), recent_arr.min())
+    max_val = max(baseline_arr.max(), recent_arr.max())
+
     if abs(max_val - min_val) < 1e-10:
         return 0.0
-    
+
     bin_edges = np.linspace(min_val, max_val, bins + 1)
-    
-    expected_hist, _ = np.histogram(expected, bins=bin_edges)
-    actual_hist, _ = np.histogram(actual, bins=bin_edges)
-    
-    # Normalize to probabilities
-    expected_perc = expected_hist / (expected_hist.sum() + 1e-10)
-    actual_perc = actual_hist / (actual_hist.sum() + 1e-10)
-    
-    # Calculate PSI
-    psi = 0.0
-    for e, a in zip(expected_perc, actual_perc):
-        # Avoid log(0)
-        if e > 0 and a > 0:
-            psi += (a - e) * np.log(a / e)
-    
-    return abs(psi)  # PSI is always positive
+    baseline_hist, _ = np.histogram(baseline_arr, bins=bin_edges)
+    recent_hist, _ = np.histogram(recent_arr, bins=bin_edges)
+
+    eps = 1e-3
+    baseline_probs = np.clip(baseline_hist / (baseline_hist.sum() + eps), eps, None)
+    recent_probs = np.clip(recent_hist / (recent_hist.sum() + eps), eps, None)
+
+    return float(np.sum(baseline_probs * np.log(baseline_probs / recent_probs)))
+
+def compute_psi(expected: np.ndarray, actual: np.ndarray, bins: int = 10) -> float:
+    """Population Stability Index proxy using normalized mean difference."""
+    if len(expected) == 0 or len(actual) == 0:
+        return 0.0
+
+    expected = np.asarray(expected)
+    actual = np.asarray(actual)
+
+    mean_diff = abs(actual.mean() - expected.mean())
+    baseline_std = expected.std() + 1e-6
+
+    return float(mean_diff / (baseline_std * 2.0))
 
 
 def get_training_frame(db: Session, model_id: str) -> Optional[pd.DataFrame]:
@@ -126,7 +148,7 @@ def detect_drift(df: pd.DataFrame, cutoff_days: int = None) -> Dict:
     df must have columns: ['run_timestamp', 'y_pred', 'y_true']
     """
     if cutoff_days is None:
-        cutoff_days = settings.DRIFT_CUTOFF_DAYS
+        cutoff_days = settings.drift_cutoff_days
     
     if df is None or len(df) == 0:
         return {"enough_data": False, "drift_detected": "NO"}
@@ -174,8 +196,8 @@ def detect_drift(df: pd.DataFrame, cutoff_days: int = None) -> Dict:
     
     # Determine drift
     drift_detected = (
-        ks_p < settings.KS_THRESHOLD or  # Significant distribution difference
-        psi > settings.PSI_THRESHOLD  # Significant population shift
+        ks_p < settings.ks_threshold or  # Significant distribution difference
+        psi > settings.psi_threshold  # Significant population shift
     )
     
     return {

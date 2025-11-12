@@ -130,6 +130,6 @@ def load_moe_predictions_from_csv(path: str) -> List[Dict]:
 
 def ingest_moe_from_file_path(file_path: Optional[str] = None) -> List[Dict]:
     """Ingest MOE predictions from configured path or provided path"""
-    path = file_path or settings.MOE_CSV_PATH
+    path = file_path or settings.moe_csv_path
     return load_moe_predictions_from_csv(path)
 

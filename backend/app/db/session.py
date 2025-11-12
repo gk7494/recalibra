@@ -4,11 +4,12 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
 
 engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+    settings.database_url,
+    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {}
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 def get_db() -> Session:
     """Dependency for FastAPI to get database session"""
@@ -17,11 +18,3 @@ def get_db() -> Session:
         yield db
     finally:
         db.close()
-
-
-
-
-
-
-
-

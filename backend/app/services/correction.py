@@ -61,8 +61,8 @@ def train_correction_layer(df: pd.DataFrame, model_id: str) -> Dict:
     r2 = r2_score(y, y_pred_corr)
     
     # Save model
-    os.makedirs(settings.CORRECTION_DIR, exist_ok=True)
-    path = os.path.join(settings.CORRECTION_DIR, f"{model_id}_correction.joblib")
+    os.makedirs(settings.correction_dir, exist_ok=True)
+    path = os.path.join(settings.correction_dir, f"{model_id}_correction.joblib")
     joblib.dump(pipe, path)
     
     print(f"✅ Trained correction layer for {model_id}: MAE={mae:.3f}, RMSE={rmse:.3f}, R²={r2:.3f}")
@@ -79,7 +79,7 @@ def train_correction_layer(df: pd.DataFrame, model_id: str) -> Dict:
 
 def load_correction_layer(model_id: str) -> Optional[Pipeline]:
     """Load a trained correction layer"""
-    path = os.path.join(settings.CORRECTION_DIR, f"{model_id}_correction.joblib")
+    path = os.path.join(settings.correction_dir, f"{model_id}_correction.joblib")
     if not os.path.exists(path):
         return None
     return joblib.load(path)

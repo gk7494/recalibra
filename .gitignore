@@ -55,3 +55,4 @@ frontend/.env.production.local
 *.pth
 models/
 
+backend/venv/
