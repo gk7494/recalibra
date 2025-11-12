@@ -27,9 +27,9 @@ until pg_isready -h postgres -U recalibra; do\n\
 done\n\
 echo "Database is ready!"\n\
 echo "Creating database tables..."\n\
-python -c "from database import engine, Base; from models import *; Base.metadata.create_all(bind=engine)" || true\n\
+python -c "from app.db.session import engine; from app.db.models import Base; Base.metadata.create_all(bind=engine)" || true\n\
 echo "Starting server..."\n\
-exec uvicorn main:app --host 0.0.0.0 --port 8000\n\
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 CMD ["/app/start.sh"]
