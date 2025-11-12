@@ -43,6 +43,7 @@ jobs:
     - name: Run tests
       env:
         DATABASE_URL: postgresql://recalibra:recalibra_test@localhost:5432/recalibra_test
+        PYTHONPATH: ${{ github.workspace }}/backend
       run: |
         cd backend
         pytest tests/ -v --cov=. --cov-report=xml
