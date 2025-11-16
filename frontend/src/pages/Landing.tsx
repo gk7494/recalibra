@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import './Landing.css';
+import { useNavigate } from 'react-router-dom';
+import { api } from '../services/api';
 
 const features = [
   {
@@ -183,6 +185,27 @@ const faqs = [
 ];
 
 const Landing: React.FC = () => {
+  const navigate = useNavigate();
+  const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
+
+  const launchDemo = async () => {
+    setSeedError(null);
+    setSeeding(true);
+    try {
+      // Seed sandbox/demo data on the backend
+      await api.post('/api/sandbox/seed');
+      // Navigate into the product experience
+      navigate('/app');
+    } catch (err: any) {
+      console.error('Demo seed failed:', err);
+      const msg = err?.response?.data?.detail || 'Failed to seed demo data. Please ensure the API is running.';
+      setSeedError(msg);
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   return (
     <div className="landing">
       <nav className="landing-nav">
@@ -232,13 +255,33 @@ const Landing: React.FC = () => {
               and ship auditor-ready evidence in hours—not weeks.
             </p>
             <div className="hero-actions">
-              <a className="hero-primary" href="#contact">
-                Start A Drift Readiness Review →
-              </a>
+              <button
+                className="hero-primary"
+                onClick={launchDemo}
+                disabled={seeding}
+                aria-busy={seeding}
+              >
+                {seeding ? 'Preparing Demo…' : 'Launch Live Demo →'}
+              </button>
               <a className="hero-secondary" href="#platform">
                 Explore the Platform
               </a>
             </div>
+            {seedError && (
+              <div
+                style={{
+                  marginTop: '0.75rem',
+                  color: '#b91c1c',
+                  background: 'rgba(239,68,68,0.08)',
+                  border: '1px solid rgba(239,68,68,0.35)',
+                  padding: '0.75rem 1rem',
+                  borderRadius: 8,
+                  fontSize: '0.875rem',
+                }}
+              >
+                {seedError}
+              </div>
+            )}
           </div>
           <div className="hero-visual" aria-hidden="true">
             <div className="hero-visual-grid" />
