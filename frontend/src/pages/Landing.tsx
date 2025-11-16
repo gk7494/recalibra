@@ -355,6 +355,23 @@ const Landing: React.FC = () => {
                 border: 0
               }}
             />
+            <div style={{ position: 'absolute', bottom: 8, right: 12 }}>
+              <a
+                href={DEMO_VIDEO_URL.replace('/preview', '/view?usp=sharing')}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  color: 'rgba(255,255,255,0.82)',
+                  fontSize: '0.85rem',
+                  textDecoration: 'underline',
+                  background: 'rgba(0,0,0,0.35)',
+                  padding: '6px 10px',
+                  borderRadius: 8
+                }}
+              >
+                Open demo in new tab
+              </a>
+            </div>
             <noscript>
               <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff' }}>
                 Enable JavaScript to view the demo video.
