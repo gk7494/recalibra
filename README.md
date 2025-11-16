@@ -91,6 +91,35 @@ Stop the stack with `docker-compose down` or `./stop-dev.sh`.
 
 ---
 
+## Deploy (One-Click-ish)
+
+### Backend on Render
+This repo includes `render.yaml`. To deploy:
+1. Push to GitHub (already done).
+2. In Render, “New +” → “Blueprint” → select this repo.
+3. Render will provision:
+   - A Postgres database `recalibra-db`
+   - A Web Service `recalibra-backend` from `backend/Dockerfile`
+4. Set CORS (optional): Update `render.yaml` `CORS_ORIGINS` with your Vercel domain(s).
+5. After deploy, note your backend URL, e.g. `https://recalibra-backend.onrender.com`
+
+Health: `GET /health` should return `{"status":"healthy"}`
+
+### Frontend on Vercel
+`vercel.json` is configured to build the frontend from `frontend/`.
+1. Create a Vercel Project from this repo.
+2. Set Environment Variables:
+   - `REACT_APP_API_URL` = your Render backend URL
+   - `REACT_APP_WS_URL` = your Render WS URL (e.g., `wss://<render-domain>/ws`)
+3. Deploy. The SPA routes are handled with rewrites to `/index.html`.
+
+After both are live:
+- Landing page: your Vercel domain (`/`)
+- Watch Demo: embedded video section on the landing
+- “Launch Live Demo →” seeds via `POST /api/sandbox/seed` on the Render backend and takes you into `/app`
+
+---
+
 ## Running Tests
 Backend pytest suite (uses in-memory SQLite):
 ```bash
