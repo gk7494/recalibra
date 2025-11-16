@@ -27,6 +27,13 @@ app.add_middleware(
 from app.api.routes_models import router as models_router
 app.include_router(models_router)
 
+# Demo sandbox seeding endpoints (used by landing page "Launch Live Demo")
+try:
+    from app.api.sandbox import router as sandbox_router
+    app.include_router(sandbox_router, prefix="/api")
+except ImportError:
+    pass
+
 try:
     from app.api.routes_molecules import router as molecules_router
     app.include_router(molecules_router)
