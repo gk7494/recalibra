@@ -214,6 +214,9 @@ const Landing: React.FC = () => {
           Recalibra
         </div>
         <div className="landing-nav-links">
+          <a className="landing-nav-link" href="#demo">
+            Demo
+          </a>
           <a className="landing-nav-link" href="#insights">
             Company
           </a>
@@ -263,6 +266,9 @@ const Landing: React.FC = () => {
               >
                 {seeding ? 'Preparing Demo…' : 'Launch Live Demo →'}
               </button>
+              <a className="hero-secondary" href="#demo">
+                Watch Demo
+              </a>
               <a className="hero-secondary" href="#platform">
                 Explore the Platform
               </a>
@@ -309,6 +315,42 @@ const Landing: React.FC = () => {
                 <p>Evidence pack automatically generated for Q4 compliance window.</p>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="section" id="demo">
+          <div className="section-heading">
+            <span className="section-eyebrow">PRODUCT WALKTHROUGH</span>
+            <h2 className="section-title">See Recalibra in action</h2>
+            <p className="section-subtitle">
+              A 60–90 second overview of seeding demo data, detecting drift, and reviewing metrics and recent records.
+            </p>
+          </div>
+          <div
+            style={{
+              position: 'relative',
+              paddingBottom: '56.25%',
+              height: 0,
+              overflow: 'hidden',
+              borderRadius: 12,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+              background: '#000'
+            }}
+          >
+            <iframe
+              title="Recalibra Demo"
+              src="https://drive.google.com/file/d/1aM5cv9jCBMLa9Yd8HbKGSAfBRaGCOLuZ/preview"
+              allow="autoplay; fullscreen"
+              allowFullScreen
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                border: 0
+              }}
+            />
           </div>
         </section>
 
