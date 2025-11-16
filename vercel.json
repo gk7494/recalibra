@@ -18,7 +18,8 @@
   ],
   "env": {
     "REACT_APP_API_URL": "https://your-render-backend.onrender.com",
-    "REACT_APP_WS_URL": "wss://your-render-backend.onrender.com/ws"
+    "REACT_APP_WS_URL": "wss://your-render-backend.onrender.com/ws",
+    "REACT_APP_DEMO_VIDEO_URL": "https://drive.google.com/file/d/1aM5cv9jCBMLa9Yd8HbKGSAfBRaGCOLuZ/preview"
   }
 }
 

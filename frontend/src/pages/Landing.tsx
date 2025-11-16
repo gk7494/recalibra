@@ -3,6 +3,10 @@ import './Landing.css';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 
+const DEMO_VIDEO_URL =
+  process.env.REACT_APP_DEMO_VIDEO_URL ||
+  'https://drive.google.com/file/d/1aM5cv9jCBMLa9Yd8HbKGSAfBRaGCOLuZ/preview';
+
 const features = [
   {
     icon: '⚡',
@@ -339,7 +343,7 @@ const Landing: React.FC = () => {
           >
             <iframe
               title="Recalibra Demo"
-              src="https://drive.google.com/file/d/1aM5cv9jCBMLa9Yd8HbKGSAfBRaGCOLuZ/preview"
+              src={DEMO_VIDEO_URL}
               allow="autoplay; fullscreen"
               allowFullScreen
               style={{
@@ -351,6 +355,11 @@ const Landing: React.FC = () => {
                 border: 0
               }}
             />
+            <noscript>
+              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#fff' }}>
+                Enable JavaScript to view the demo video.
+              </div>
+            </noscript>
           </div>
         </section>
 
