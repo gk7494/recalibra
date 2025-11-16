@@ -129,18 +129,19 @@ pip install -r requirements.txt || {
 }
 echo "✅ Python dependencies installed successfully"
 
-# Create database tables
+# Create database tables (using new app.* paths)
 echo "Creating database tables..."
-$PYTHON_CMD -c "
+$PYTHON_CMD - <<'PYCODE' || {
 import os
-os.environ['DATABASE_URL'] = '${DATABASE_URL}'
-from database import engine, Base
-from models import *
+os.environ['DATABASE_URL'] = os.environ.get('DATABASE_URL', '')
+from app.db.session import engine
+from app.db.models import Base  # imports all declarative models via __init__
 Base.metadata.create_all(bind=engine)
 print('✅ Database tables created')
-" || {
+PYCODE
+if [ $? -ne 0 ]; then
     echo "⚠️  Warning: Database setup had issues, but continuing..."
-}
+fi
 
 # Get full path to uvicorn
 UVICORN_PATH=$(which uvicorn)
@@ -161,7 +162,7 @@ cd "$SCRIPT_DIR/backend"
     source venv/bin/activate
     export DATABASE_URL="${DATABASE_URL}"
     cd "$SCRIPT_DIR/backend"
-    uvicorn main:app --host 0.0.0.0 --port 8000 --reload > ../backend.log 2>&1
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload > ../backend.log 2>&1
 ) &
 BACKEND_PID=$!
 echo "Backend started (PID: $BACKEND_PID)"
@@ -196,7 +197,7 @@ if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
     echo "   Trying to start anyway..."
 fi
 
-# Start frontend
+# Start frontend (CRA)
 echo "Starting frontend server on http://localhost:3000..."
 echo "   (This may take 30-60 seconds to compile...)"
 cd "$SCRIPT_DIR/frontend"
