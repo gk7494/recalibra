@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   AlertCircle,
   ArrowLeft,
+  Camera,
   HardHat,
   CheckCircle2,
   ClipboardList,
@@ -19,6 +20,7 @@ import {
   ShieldAlert,
   Tag,
   UploadCloud,
+  X,
 } from "lucide-react";
 
 type UploadedFile = {
@@ -165,7 +167,8 @@ export default function NewIssuePage() {
   const [quickTags, setQuickTags] = useState<string[]>([]);
   const [rawNote, setRawNote] = useState("");
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [files, setFiles] = useState<FileList | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [capturedFiles, setCapturedFiles] = useState<File[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [imageDescriptions, setImageDescriptions] = useState<ImageDescription[]>(
     []
@@ -180,6 +183,11 @@ export default function NewIssuePage() {
   const [transcribing, setTranscribing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
 
   const allVisualFindings = useMemo(
     () =>
@@ -220,7 +228,113 @@ export default function NewIssuePage() {
         ? current.filter((item) => item !== tag)
         : [...current, tag]
     );
-    resetDraftArtifacts();
+      resetDraftArtifacts();
+  }
+
+  function resetPhotoArtifacts() {
+    setUploadedFiles([]);
+    setImageDescriptions([]);
+    setInspectionContext(null);
+    setTicket(null);
+  }
+
+  async function startCamera() {
+    try {
+      setCameraError("");
+      setCameraReady(false);
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera capture is not available in this browser.");
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      });
+
+      cameraStreamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      setCameraReady(true);
+    } catch (err: unknown) {
+      setCameraReady(false);
+      setCameraError(
+        err instanceof Error
+          ? err.message
+          : "Camera permission was denied or the camera is unavailable."
+      );
+    }
+  }
+
+  function stopCamera() {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setCameraReady(false);
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }
+
+  function closeCamera() {
+    stopCamera();
+    setCameraOpen(false);
+  }
+
+  function openCamera() {
+    setCameraOpen(true);
+    window.setTimeout(() => {
+      void startCamera();
+    }, 0);
+  }
+
+  useEffect(() => {
+    return () => {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    };
+  }, []);
+
+  async function captureCameraPhoto() {
+    const video = videoRef.current;
+    if (!video || !cameraReady || video.videoWidth === 0 || video.videoHeight === 0) {
+      setCameraError("Camera is not ready yet.");
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      setCameraError("Unable to capture from the camera.");
+      return;
+    }
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92)
+    );
+
+    if (!blob) {
+      setCameraError("Unable to save the captured photo.");
+      return;
+    }
+
+    const filename = `field-camera-${Date.now()}.jpg`;
+    const file = new File([blob], filename, { type: "image/jpeg" });
+    setCapturedFiles((current) => [...current, file]);
+    resetPhotoArtifacts();
   }
 
   async function handleTranscribeAudio() {
@@ -254,7 +368,8 @@ export default function NewIssuePage() {
   }
 
   async function uploadImages(): Promise<UploadedFile[]> {
-    if (!files || files.length === 0) return uploadedFiles;
+    const photos = [...files, ...capturedFiles];
+    if (photos.length === 0) return uploadedFiles;
     if (uploadedFiles.length > 0) return uploadedFiles;
 
     setUploading(true);
@@ -262,7 +377,7 @@ export default function NewIssuePage() {
 
     const formData = new FormData();
 
-    for (const file of Array.from(files)) {
+    for (const file of photos) {
       formData.append("files", file);
     }
 
@@ -398,7 +513,8 @@ export default function NewIssuePage() {
     });
   }
 
-  const selectedFileCount = files?.length || uploadedFiles.length;
+  const selectedFileCount =
+    files.length + capturedFiles.length || uploadedFiles.length;
   const busy = uploading || analyzingImages || generating || transcribing;
   const buttonText = uploading
     ? "Uploading photos"
@@ -617,14 +733,74 @@ export default function NewIssuePage() {
                     multiple
                     accept="image/*"
                     onChange={(event) => {
-                      setFiles(event.target.files);
-                      setUploadedFiles([]);
-                      setImageDescriptions([]);
-                      setInspectionContext(null);
-                      setTicket(null);
+                      setFiles(Array.from(event.target.files || []));
+                      resetPhotoArtifacts();
                     }}
                     className="sr-only"
                   />
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                        <Camera size={16} />
+                        Camera capture
+                      </div>
+                      {capturedFiles.length > 0 && (
+                        <span className="rounded-md bg-white px-2 py-1 text-xs font-medium text-slate-600">
+                          {capturedFiles.length} captured
+                        </span>
+                      )}
+                    </div>
+
+                    {!cameraOpen ? (
+                      <button
+                        type="button"
+                        onClick={openCamera}
+                        className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:border-emerald-600 hover:text-emerald-700"
+                      >
+                        <Camera size={16} />
+                        Open camera
+                      </button>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="overflow-hidden rounded-lg border border-slate-300 bg-black">
+                          <video
+                            ref={videoRef}
+                            muted
+                            playsInline
+                            autoPlay
+                            className="aspect-video w-full object-cover"
+                          />
+                        </div>
+
+                        {cameraError && (
+                          <p className="text-xs leading-5 text-red-700">
+                            {cameraError}
+                          </p>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={captureCameraPhoto}
+                            disabled={!cameraReady}
+                            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Camera size={16} />
+                            Capture
+                          </button>
+                          <button
+                            type="button"
+                            onClick={closeCamera}
+                            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:border-slate-400"
+                          >
+                            <X size={16} />
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <label
