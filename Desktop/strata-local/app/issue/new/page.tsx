@@ -181,6 +181,10 @@ export default function NewIssuePage() {
   const [analyzingImages, setAnalyzingImages] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [liveListening, setLiveListening] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [liveTranscriptStatus, setLiveTranscriptStatus] = useState("");
+  const [liveChunkPending, setLiveChunkPending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -188,6 +192,9 @@ export default function NewIssuePage() {
   const [cameraError, setCameraError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const liveRecorderRef = useRef<MediaRecorder | null>(null);
+  const liveAudioStreamRef = useRef<MediaStream | null>(null);
+  const liveChunkCountRef = useRef(0);
 
   const allVisualFindings = useMemo(
     () =>
@@ -236,6 +243,154 @@ export default function NewIssuePage() {
     setImageDescriptions([]);
     setInspectionContext(null);
     setTicket(null);
+  }
+
+  function appendDictation(text: string) {
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    setRawNote((current) =>
+      [current.trim(), cleanText].filter(Boolean).join(current.trim() ? " " : "")
+    );
+    resetDraftArtifacts();
+  }
+
+  function stopLiveTranscription() {
+    liveRecorderRef.current?.stop();
+    liveRecorderRef.current = null;
+    liveAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    liveAudioStreamRef.current = null;
+    setLiveListening(false);
+    setLiveTranscript("");
+    setLiveTranscriptStatus("Live transcription stopped");
+  }
+
+  async function transcribeLiveChunk(blob: Blob) {
+    if (blob.size < 1024) return;
+
+    const chunkNumber = liveChunkCountRef.current + 1;
+    liveChunkCountRef.current = chunkNumber;
+    const extension = blob.type.includes("mp4")
+      ? "m4a"
+      : blob.type.includes("ogg")
+      ? "ogg"
+      : "webm";
+    const file = new File([blob], `live-note-${Date.now()}-${chunkNumber}.${extension}`, {
+      type: blob.type || "audio/webm",
+    });
+    const formData = new FormData();
+    formData.append("audio", file);
+
+    try {
+      setLiveChunkPending(true);
+      setLiveTranscriptStatus("Transcribing recent audio locally");
+
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Live transcription failed.");
+      }
+
+      const transcript = String(data.transcript || "").trim();
+      if (transcript) {
+        appendDictation(transcript);
+        setLiveTranscript(transcript);
+      }
+
+      if (liveRecorderRef.current?.state === "recording") {
+        setLiveTranscriptStatus("Listening");
+      }
+    } catch (err: unknown) {
+      setLiveTranscriptStatus(
+        err instanceof Error
+          ? err.message
+          : "Live transcription failed. Use the audio file fallback."
+      );
+    } finally {
+      setLiveChunkPending(false);
+    }
+  }
+
+  async function startLiveTranscription() {
+    try {
+      liveRecorderRef.current?.stop();
+      liveRecorderRef.current = null;
+      liveAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+      liveAudioStreamRef.current = null;
+      setLiveTranscript("");
+      setLiveTranscriptStatus("Requesting microphone access");
+
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+        setLiveTranscriptStatus(
+          "Live transcription is not available in this browser. Use the audio file transcription fallback."
+        );
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+      const mimeType = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+      ].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined
+      );
+
+      liveAudioStreamRef.current = stream;
+      liveRecorderRef.current = recorder;
+      liveChunkCountRef.current = 0;
+
+      recorder.onstart = () => {
+        setLiveListening(true);
+        setLiveTranscriptStatus("Listening");
+      };
+
+      recorder.onstop = () => {
+        liveAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+        liveAudioStreamRef.current = null;
+        liveRecorderRef.current = null;
+        setLiveListening(false);
+      };
+
+      recorder.onerror = () => {
+        setLiveTranscriptStatus(
+          "Microphone recording stopped. Use the audio file fallback if this repeats."
+        );
+      };
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          void transcribeLiveChunk(event.data);
+        }
+      };
+
+      recorder.start(8000);
+    } catch (err: unknown) {
+      setLiveListening(false);
+      liveAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+      liveAudioStreamRef.current = null;
+      const message = err instanceof Error ? err.message : "";
+      const name = err instanceof Error ? err.name : "";
+      setLiveTranscriptStatus(
+        name === "NotAllowedError" ||
+          message.toLowerCase().includes("permission denied")
+          ? "Microphone permission was denied. Allow microphone access for Codex or this browser in macOS Settings and for localhost in site settings, then press Start live transcription again."
+          : message || "Unable to start live transcription."
+      );
+    }
   }
 
   async function startCamera() {
@@ -300,6 +455,10 @@ export default function NewIssuePage() {
     return () => {
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
+      liveRecorderRef.current?.stop();
+      liveRecorderRef.current = null;
+      liveAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+      liveAudioStreamRef.current = null;
     };
   }, []);
 
@@ -863,9 +1022,27 @@ export default function NewIssuePage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Field note
-                  </label>
+                  <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="block text-sm font-medium text-slate-700">
+                      Field note
+                    </label>
+                    <button
+                      type="button"
+                      onClick={
+                        liveListening
+                          ? stopLiveTranscription
+                          : startLiveTranscription
+                      }
+                      className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium ${
+                        liveListening
+                          ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                          : "border-slate-300 bg-white text-slate-700 hover:border-emerald-600 hover:text-emerald-700"
+                      }`}
+                    >
+                      <Mic size={16} />
+                      {liveListening ? "Stop live transcription" : "Start live transcription"}
+                    </button>
+                  </div>
                   <textarea
                     value={rawNote}
                     onChange={(event) => {
@@ -875,6 +1052,29 @@ export default function NewIssuePage() {
                     placeholder="What did you see, who is exposed, and what was done immediately?"
                     className="min-h-40 w-full resize-y rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/15"
                   />
+                  {(liveTranscriptStatus || liveTranscript) && (
+                    <div
+                      className={`mt-3 rounded-lg border p-3 text-xs leading-5 ${
+                        liveListening
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                          : liveTranscriptStatus.toLowerCase().includes("denied")
+                          ? "border-amber-200 bg-amber-50 text-amber-900"
+                          : "border-slate-200 bg-slate-50 text-slate-700"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 font-medium">
+                        <Mic size={14} />
+                        {liveChunkPending
+                          ? "Transcribing recent audio locally"
+                          : liveTranscriptStatus || "Listening"}
+                      </div>
+                      {liveTranscript && (
+                        <p className="mt-1 text-slate-700">
+                          {liveTranscript}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <p className="mb-2 flex items-center gap-2 text-xs font-medium uppercase text-slate-500">
                       <HardHat size={14} />
@@ -992,7 +1192,15 @@ export default function NewIssuePage() {
                   active={contextFieldCount >= 5}
                   value={`${contextFieldCount}/9`}
                 />
-                <StateRow label="Voice" active={!!audioFile} value={audioFile?.name || "optional"} />
+                <StateRow
+                  label="Voice"
+                  active={!!audioFile || liveListening}
+                  value={
+                    liveListening
+                      ? "live"
+                      : audioFile?.name || "optional"
+                  }
+                />
                 <StateRow label="Photos" active={selectedFileCount > 0} value={String(selectedFileCount)} />
                 <StateRow
                   label="Photo assessment"
