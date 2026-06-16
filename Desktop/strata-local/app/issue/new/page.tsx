@@ -745,7 +745,7 @@ export default function NewIssuePage() {
                         <Camera size={16} />
                         Camera capture
                       </div>
-                      {capturedFiles.length > 0 && (
+                    {capturedFiles.length > 0 && (
                         <span className="rounded-md bg-white px-2 py-1 text-xs font-medium text-slate-600">
                           {capturedFiles.length} captured
                         </span>
@@ -774,9 +774,14 @@ export default function NewIssuePage() {
                         </div>
 
                         {cameraError && (
-                          <p className="text-xs leading-5 text-red-700">
-                            {cameraError}
-                          </p>
+                          <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-900">
+                            <p>{cameraError}</p>
+                            <p className="mt-1">
+                              If live preview is blocked, use the camera picker
+                              below or enable camera access for localhost in the
+                              browser site settings.
+                            </p>
+                          </div>
                         )}
 
                         <div className="grid grid-cols-2 gap-2">
@@ -800,6 +805,28 @@ export default function NewIssuePage() {
                         </div>
                       </div>
                     )}
+
+                    <label
+                      htmlFor="camera-picker"
+                      className="mt-3 inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:border-emerald-600 hover:text-emerald-700"
+                    >
+                      <Camera size={16} />
+                      Use camera picker
+                    </label>
+                    <input
+                      id="camera-picker"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (!file) return;
+                        setCapturedFiles((current) => [...current, file]);
+                        resetPhotoArtifacts();
+                        event.target.value = "";
+                      }}
+                      className="sr-only"
+                    />
                   </div>
 
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
