@@ -1,12 +1,14 @@
 import fs from "fs";
 import { VisualFinding } from "./types";
 import { resolveVisionModels } from "./model-registry";
+import { ImageQualityReport, inspectImageQuality } from "./image-quality";
 
 export type VisionAnalysis = {
   description: string;
   model: string;
   modelsUsed: string[];
   analysisConfidence: "low" | "medium" | "high";
+  imageQuality: ImageQualityReport;
   reviewNotes: string[];
   visualFindings: VisualFinding[];
 };
@@ -16,6 +18,9 @@ type RawVisualFinding = {
   observation?: unknown;
   category?: unknown;
   confidence?: unknown;
+  visible_evidence?: unknown;
+  recommended_verification?: unknown;
+  action_hint?: unknown;
   bbox?: unknown;
 };
 
@@ -53,6 +58,14 @@ function asText(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function asTextArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asText(item))
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
 function normalizeCategory(value: unknown) {
   const category = asText(value, "other").toLowerCase();
   return ALLOWED_CATEGORIES.has(category) ? category : "other";
@@ -86,17 +99,31 @@ function normalizeFinding(
   sourceModel: string
 ): VisualFinding {
   const confidence = asText(finding.confidence, "medium");
+  const normalizedConfidence =
+    confidence === "low" || confidence === "medium" || confidence === "high"
+      ? confidence
+      : "medium";
 
   return {
     label: asText(finding.label, "Inspection finding"),
     observation: asText(finding.observation, "Visible condition noted."),
     category: normalizeCategory(finding.category),
-    confidence:
-      confidence === "low" || confidence === "medium" || confidence === "high"
-        ? confidence
-        : "medium",
+    confidence: normalizedConfidence,
+    visibleEvidence: asTextArray(finding.visible_evidence),
+    recommendedVerification: asText(
+      finding.recommended_verification,
+      "Verify the condition in the field before assigning corrective work."
+    ),
+    actionHint: asText(finding.action_hint),
+    verification:
+      normalizedConfidence === "high" ? "review" : "field_verify",
     sourceModels: [sourceModel],
-    evidenceScore: confidence === "high" ? 0.85 : confidence === "medium" ? 0.6 : 0.35,
+    evidenceScore:
+      normalizedConfidence === "high"
+        ? 0.78
+        : normalizedConfidence === "medium"
+        ? 0.56
+        : 0.32,
     bbox: normalizeBBox(finding.bbox),
   };
 }
@@ -130,10 +157,6 @@ function parseVisionResponse(
   }
 }
 
-function findingKey(finding: VisualFinding) {
-  return `${finding.category}:${finding.label}`.toLowerCase();
-}
-
 function confidenceRank(confidence: VisualFinding["confidence"]) {
   const ranks = {
     low: 1,
@@ -144,7 +167,34 @@ function confidenceRank(confidence: VisualFinding["confidence"]) {
   return ranks[confidence];
 }
 
-function mergeFindings(runs: ModelRun[]) {
+function confidenceFromScore(score: number): VisualFinding["confidence"] {
+  if (score >= 0.78) return "high";
+  if (score >= 0.52) return "medium";
+  return "low";
+}
+
+function nextLowerConfidence(
+  confidence: VisualFinding["confidence"]
+): VisualFinding["confidence"] {
+  if (confidence === "high") return "medium";
+  if (confidence === "medium") return "low";
+  return "low";
+}
+
+function normalizeWords(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter((part) => part.length > 2);
+}
+
+function findingKey(finding: VisualFinding) {
+  const words = normalizeWords(`${finding.category} ${finding.label}`);
+  return `${finding.category}:${words.slice(0, 4).join("-") || "finding"}`;
+}
+
+function mergeFindings(runs: ModelRun[], imageQuality: ImageQualityReport) {
   const merged = new Map<string, VisualFinding>();
 
   for (const run of runs) {
@@ -169,6 +219,12 @@ function mergeFindings(runs: ModelRun[]) {
         Math.max(current.evidenceScore || 0.4, finding.evidenceScore || 0.4) +
           0.12
       );
+      const visibleEvidence = Array.from(
+        new Set([
+          ...(current.visibleEvidence || []),
+          ...(finding.visibleEvidence || []),
+        ])
+      ).slice(0, 5);
 
       merged.set(key, {
         ...current,
@@ -178,19 +234,80 @@ function mergeFindings(runs: ModelRun[]) {
             : current.observation,
         confidence,
         evidenceScore,
+        visibleEvidence,
+        recommendedVerification:
+          current.recommendedVerification || finding.recommendedVerification,
+        actionHint: current.actionHint || finding.actionHint,
         sourceModels,
         bbox: current.bbox || finding.bbox || null,
       });
     }
   }
 
-  return Array.from(merged.values()).sort(
-    (a, b) => (b.evidenceScore || 0) - (a.evidenceScore || 0)
-  );
+  return Array.from(merged.values())
+    .map((finding) => calibrateFinding(finding, runs.length, imageQuality))
+    .filter((finding) => (finding.evidenceScore || 0) >= 0.24)
+    .sort((a, b) => (b.evidenceScore || 0) - (a.evidenceScore || 0));
 }
 
-function scoreAnalysis(runs: ModelRun[], findings: VisualFinding[]) {
-  if (findings.length === 0) return "medium";
+function calibrateFinding(
+  finding: VisualFinding,
+  runCount: number,
+  imageQuality: ImageQualityReport
+): VisualFinding {
+  const sourceCount = finding.sourceModels?.length || 1;
+  const hasConsensus = runCount > 1 && sourceCount > 1;
+  const qualityPenalty =
+    imageQuality.status === "retake"
+      ? 0.25
+      : imageQuality.status === "review"
+      ? 0.12
+      : 0;
+  const bboxBonus = finding.bbox ? 0.05 : 0;
+  const consensusBonus = hasConsensus ? 0.18 : 0;
+  const evidenceBonus = finding.visibleEvidence?.length ? 0.04 : 0;
+  const score = Math.max(
+    0.05,
+    Math.min(
+      0.98,
+      (finding.evidenceScore || 0.4) +
+        consensusBonus +
+        bboxBonus +
+        evidenceBonus -
+        qualityPenalty
+    )
+  );
+  let confidence = confidenceFromScore(score);
+
+  if (!hasConsensus && runCount > 1 && confidence === "high") {
+    confidence = "medium";
+  }
+
+  if (imageQuality.status === "retake") {
+    confidence = nextLowerConfidence(confidence);
+  }
+
+  return {
+    ...finding,
+    confidence,
+    evidenceScore: Math.round(score * 100) / 100,
+    verification:
+      confidence === "high" && imageQuality.status === "usable" && hasConsensus
+        ? "accepted"
+        : imageQuality.status === "retake" || confidence === "low"
+        ? "field_verify"
+        : "review",
+    qualityFlags: imageQuality.flags,
+  };
+}
+
+function scoreAnalysis(
+  runs: ModelRun[],
+  findings: VisualFinding[],
+  imageQuality: ImageQualityReport
+) {
+  if (imageQuality.status === "retake") return "low";
+  if (findings.length === 0) return imageQuality.status === "usable" ? "medium" : "low";
 
   const multiModelFinding = findings.some(
     (finding) => (finding.sourceModels || []).length > 1
@@ -202,8 +319,13 @@ function scoreAnalysis(runs: ModelRun[], findings: VisualFinding[]) {
   return "low";
 }
 
-function buildReviewNotes(runs: ModelRun[], findings: VisualFinding[]) {
+function buildReviewNotes(
+  runs: ModelRun[],
+  findings: VisualFinding[],
+  imageQuality: ImageQualityReport
+) {
   const notes = [
+    `Photo quality ${imageQuality.status}: ${imageQuality.width}x${imageQuality.height}, sharpness ${imageQuality.sharpness}, contrast ${imageQuality.contrast}.`,
     `${runs.length} photo assessment check${
       runs.length === 1 ? "" : "s"
     } completed.`,
@@ -214,6 +336,14 @@ function buildReviewNotes(runs: ModelRun[], findings: VisualFinding[]) {
 
   if (runs.length < 2) {
     notes.push("Only one photo assessment check completed; field verification is recommended.");
+  }
+
+  if (imageQuality.flags.length) {
+    notes.push(...imageQuality.flags.slice(0, 3));
+  }
+
+  if (findings.some((finding) => finding.verification === "field_verify")) {
+    notes.push("Some findings require field verification before work is assigned.");
   }
 
   if (findings.some((finding) => finding.confidence === "low")) {
@@ -256,6 +386,9 @@ Accuracy rules:
 - Do not assign severity.
 - If the user note says something that is not visible, mention only that it was reported in the description, not as visual evidence.
 - Use bounding boxes only when the finding is visibly localizable.
+- Return visible_evidence as short concrete cues such as "wet floor", "open panel", "missing guard", or "blocked extinguisher".
+- recommended_verification should be the field check needed to confirm the condition.
+- action_hint should be the first practical operations or maintenance step.
 
 Industrial checklist:
 - Housekeeping and walking-working surfaces: wet floors, poor drainage, debris, blocked walkways, floor holes, damaged stairs/rails, slip/trip/fall hazards.
@@ -275,6 +408,9 @@ Return only valid JSON:
       "observation": "visible evidence only",
       "category": "leak | electrical | machine_guarding | lockout_tagout | corrosion | housekeeping | access | egress | structural | mechanical | thermal | pressure | fire_protection | hazcom | compressed_gas | ppe | materials_handling | walking_working_surface | labeling | other",
       "confidence": "low | medium | high",
+      "visible_evidence": ["concrete visual cue"],
+      "recommended_verification": "field check needed",
+      "action_hint": "first practical next step",
       "bbox": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.2}
     }
   ]
@@ -322,6 +458,12 @@ async function runVisionModel(
                   type: "string",
                   enum: ["low", "medium", "high"],
                 },
+                visible_evidence: {
+                  type: "array",
+                  items: { type: "string" },
+                },
+                recommended_verification: { type: "string" },
+                action_hint: { type: "string" },
                 bbox: {
                   type: "object",
                   properties: {
@@ -367,8 +509,11 @@ export async function analyzeImageWithOllama(
     throw new Error(`Image not found at path: ${imagePath}`);
   }
 
-  const imageBase64 = fs.readFileSync(imagePath).toString("base64");
-  const requestedLimit = Number(process.env.STRATA_VISION_ENSEMBLE || "2");
+  const [imageBase64, imageQuality] = await Promise.all([
+    fs.promises.readFile(imagePath).then((file) => file.toString("base64")),
+    inspectImageQuality(imagePath),
+  ]);
+  const requestedLimit = Number(process.env.STRATA_VISION_ENSEMBLE || "3");
   const models = await resolveVisionModels(
     Number.isFinite(requestedLimit) ? Math.max(1, requestedLimit) : 2
   );
@@ -400,9 +545,9 @@ export async function analyzeImageWithOllama(
     );
   }
 
-  const visualFindings = mergeFindings(runs);
-  const analysisConfidence = scoreAnalysis(runs, visualFindings);
-  const reviewNotes = buildReviewNotes(runs, visualFindings);
+  const visualFindings = mergeFindings(runs, imageQuality);
+  const analysisConfidence = scoreAnalysis(runs, visualFindings, imageQuality);
+  const reviewNotes = buildReviewNotes(runs, visualFindings, imageQuality);
 
   if (errors.length) {
     reviewNotes.push(
@@ -415,6 +560,7 @@ export async function analyzeImageWithOllama(
     model: runs.map((run) => run.model).join(" + "),
     modelsUsed: runs.map((run) => run.model),
     analysisConfidence,
+    imageQuality,
     reviewNotes,
     visualFindings,
   };

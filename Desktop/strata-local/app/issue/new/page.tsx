@@ -32,6 +32,11 @@ type VisualFinding = {
   observation: string;
   category: string;
   confidence: "low" | "medium" | "high";
+  visibleEvidence?: string[];
+  recommendedVerification?: string;
+  actionHint?: string;
+  verification?: "accepted" | "review" | "field_verify";
+  qualityFlags?: string[];
   sourceModels?: string[];
   evidenceScore?: number;
   bbox?: {
@@ -42,12 +47,23 @@ type VisualFinding = {
   } | null;
 };
 
+type ImageQualityReport = {
+  width: number;
+  height: number;
+  brightness: number;
+  contrast: number;
+  sharpness: number;
+  status: "usable" | "review" | "retake";
+  flags: string[];
+};
+
 type ImageDescription = {
   imagePath: string;
   description: string;
   model?: string;
   modelsUsed?: string[];
   analysisConfidence?: "low" | "medium" | "high";
+  imageQuality?: ImageQualityReport;
   reviewNotes?: string[];
   visualFindings?: VisualFinding[];
 };
@@ -174,6 +190,7 @@ export default function NewIssuePage() {
   );
 
   const contextFieldCount = Object.values(fieldContext).filter(Boolean).length;
+  const photoQualitySummary = getPhotoQualitySummary(imageDescriptions);
 
   const composedRawNote = useMemo(
     () => buildFieldPacket(fieldContext, quickTags, rawNote),
@@ -686,6 +703,7 @@ export default function NewIssuePage() {
                       <ImagePreview
                         key={file.filename}
                         file={file}
+                        quality={analysis?.imageQuality}
                         findings={analysis?.visualFindings || []}
                       />
                     );
@@ -716,6 +734,12 @@ export default function NewIssuePage() {
                         <p className="text-sm leading-6 text-slate-700">
                           {item.description}
                         </p>
+
+                        {item.imageQuality && (
+                          <div className="mt-3">
+                            <PhotoQualityPanel quality={item.imageQuality} />
+                          </div>
+                        )}
 
                         {!!item.visualFindings?.length && (
                           <div className="mt-3 flex flex-wrap gap-2">
@@ -771,6 +795,11 @@ export default function NewIssuePage() {
                   label="Photo assessment"
                   active={imageDescriptions.length > 0}
                   value={imageDescriptions.length ? "complete" : "pending"}
+                />
+                <StateRow
+                  label="Evidence quality"
+                  active={photoQualitySummary.status !== "pending"}
+                  value={photoQualitySummary.label}
                 />
                 <StateRow label="Record" active={!!ticket} value={ticket ? "prepared" : "pending"} />
               </div>
@@ -870,10 +899,24 @@ function visiblePhotoNotes(notes?: string[]) {
         !normalized.startsWith("skipped model errors") &&
         !normalized.includes("model") &&
         !normalized.includes("photo assessment check") &&
-        !normalized.includes("localized condition")
+        !normalized.includes("localized condition") &&
+        !normalized.startsWith("photo quality")
       );
     }
   );
+}
+
+function getPhotoQualitySummary(descriptions: ImageDescription[]) {
+  if (!descriptions.length) return { status: "pending", label: "pending" };
+
+  const statuses = descriptions
+    .map((description) => description.imageQuality?.status)
+    .filter(Boolean);
+
+  if (statuses.includes("retake")) return { status: "retake", label: "retake" };
+  if (statuses.includes("review")) return { status: "review", label: "review" };
+  if (statuses.includes("usable")) return { status: "usable", label: "usable" };
+  return { status: "pending", label: "pending" };
 }
 
 function ContextInput({
@@ -1120,9 +1163,11 @@ function ReviewForm({
 
 function ImagePreview({
   file,
+  quality,
   findings,
 }: {
   file: UploadedFile;
+  quality?: ImageQualityReport;
   findings: VisualFinding[];
 }) {
   const boxedFindings = findings.filter((finding) => finding.bbox);
@@ -1138,6 +1183,12 @@ function ImagePreview({
           sizes="(min-width: 768px) 50vw, 100vw"
           className="object-cover"
         />
+
+        {quality && (
+          <div className="absolute right-2 top-2">
+            <PhotoQualityBadge status={quality.status} />
+          </div>
+        )}
 
         {boxedFindings.map((finding) => {
           const bbox = finding.bbox;
@@ -1234,13 +1285,97 @@ function StateRow({
 }
 
 function FindingChip({ finding }: { finding: VisualFinding }) {
+  const score = Math.round((finding.evidenceScore || 0) * 100);
+
   return (
     <span className="inline-flex max-w-full items-center gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
       <span className="truncate">{finding.label}</span>
       <span className="shrink-0 rounded bg-white px-1.5 py-0.5 text-slate-500">
         {finding.category.replaceAll("_", " ")}
       </span>
+      <span
+        className={`shrink-0 rounded px-1.5 py-0.5 ${
+          finding.verification === "accepted"
+            ? "bg-emerald-100 text-emerald-800"
+            : finding.verification === "field_verify"
+            ? "bg-amber-100 text-amber-900"
+            : "bg-blue-100 text-blue-800"
+        }`}
+      >
+        {finding.verification === "accepted"
+          ? "accepted"
+          : finding.verification === "field_verify"
+          ? "verify"
+          : "review"}
+      </span>
+      {!!score && (
+        <span className="shrink-0 rounded bg-white px-1.5 py-0.5 text-slate-500">
+          {score}%
+        </span>
+      )}
     </span>
+  );
+}
+
+function PhotoQualityBadge({
+  status,
+}: {
+  status: ImageQualityReport["status"];
+}) {
+  const label =
+    status === "usable"
+      ? "Usable"
+      : status === "review"
+      ? "Review"
+      : "Retake";
+  const classes =
+    status === "usable"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : status === "review"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-red-200 bg-red-50 text-red-700";
+
+  return (
+    <span
+      className={`inline-flex rounded-md border px-2 py-1 text-xs font-semibold ${classes}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function PhotoQualityPanel({ quality }: { quality: ImageQualityReport }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-xs font-medium uppercase text-slate-500">
+          Evidence quality
+        </p>
+        <PhotoQualityBadge status={quality.status} />
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 sm:grid-cols-4">
+        <Metric label="Resolution" value={`${quality.width}x${quality.height}`} />
+        <Metric label="Sharpness" value={String(quality.sharpness)} />
+        <Metric label="Contrast" value={String(quality.contrast)} />
+        <Metric label="Exposure" value={String(quality.brightness)} />
+      </div>
+      {quality.flags.length > 0 && (
+        <ul className="mt-3 space-y-1 text-xs leading-5 text-amber-900">
+          {quality.flags.slice(0, 3).map((flag) => (
+            <li key={flag}>{flag}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-slate-500">{label}</p>
+      <p className="mt-0.5 font-semibold text-slate-900">{value}</p>
+    </div>
   );
 }
 

@@ -12,6 +12,11 @@ export type VisualFinding = {
   observation: string;
   category: string;
   confidence: "low" | "medium" | "high";
+  visibleEvidence?: string[];
+  recommendedVerification?: string;
+  actionHint?: string;
+  verification?: "accepted" | "review" | "field_verify";
+  qualityFlags?: string[];
   sourceModels?: string[];
   evidenceScore?: number;
   bbox?: {

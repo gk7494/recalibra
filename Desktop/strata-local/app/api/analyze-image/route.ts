@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
         model: analysis.model,
         modelsUsed: analysis.modelsUsed,
         analysisConfidence: analysis.analysisConfidence,
+        imageQuality: analysis.imageQuality,
         reviewNotes: analysis.reviewNotes,
         visualFindings: analysis.visualFindings,
       });

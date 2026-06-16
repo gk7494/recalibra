@@ -102,6 +102,21 @@ export async function generateTicketWithOllama(
               type: "string",
               enum: ["low", "medium", "high"],
             },
+            visibleEvidence: {
+              type: "array",
+              items: { type: "string" },
+            },
+            recommendedVerification: { type: "string" },
+            actionHint: { type: "string" },
+            verification: {
+              type: "string",
+              enum: ["accepted", "review", "field_verify"],
+            },
+            evidenceScore: { type: "number" },
+            qualityFlags: {
+              type: "array",
+              items: { type: "string" },
+            },
             bbox: {
               type: "object",
               properties: {
@@ -169,6 +184,8 @@ Rules:
 - The image description is only observational evidence, not a final decision.
 - Prefer findings confirmed by multiple photo observations or high-confidence visual findings.
 - Low-confidence visual findings should be described as needing verification, not as established fact.
+- Findings marked field_verify must not be treated as confirmed until a person checks the asset or area.
+- Evidence scores below 0.52 are review-only unless the field note independently reports the same condition.
 - Historical inspection context is supporting guidance. Use it to ask for the right maintenance action, not to invent facts.
 - Recommended action should be practical for a maintenance or operations team.
 - If the user note and image description conflict, mention uncertainty in the description.
@@ -184,6 +201,7 @@ Rules:
 - immediate_action_taken should record temporary controls already taken or "Not reported".
 - corrective_action should be the durable fix to verify later.
 - visual_findings should copy the provided structured visual findings when useful; keep bounding boxes unchanged.
+- Keep visibleEvidence, recommendedVerification, actionHint, verification, evidenceScore, and qualityFlags when provided.
 
 Categories:
 - leak
@@ -259,7 +277,12 @@ ${
     const data = await response.json();
 
     try {
-      return JSON.parse(data.response);
+      return calibrateGeneratedTicket(
+        JSON.parse(data.response),
+        rawNote,
+        imageDescriptions,
+        visualFindings
+      );
     } catch {
       console.error("Bad model response:", data.response);
       lastError = `${model.installedName} returned invalid JSON.`;
@@ -269,4 +292,111 @@ ${
   throw new Error(
     lastError || "Ollama request failed. Make sure Ollama is running."
   );
+}
+
+const HIGH_RISK_TERMS = [
+  "blocked exit",
+  "blocked egress",
+  "emergency exit",
+  "exposed conductor",
+  "exposed wiring",
+  "energized",
+  "arcing",
+  "smoke",
+  "fire",
+  "major leak",
+  "active leak",
+  "chemical release",
+  "fall hazard",
+  "unguarded",
+  "missing guard",
+  "pressure",
+  "hot surface",
+  "confined space",
+];
+
+function hasHighRiskLanguage(text: string) {
+  const normalized = text.toLowerCase();
+  return HIGH_RISK_TERMS.some((term) => normalized.includes(term));
+}
+
+function appendNote(existing: string, note: string) {
+  const current = existing?.trim();
+  if (!current) return note;
+  if (current.toLowerCase().includes(note.toLowerCase())) return current;
+  return `${current} ${note}`;
+}
+
+function calibrateGeneratedTicket(
+  ticket: GeneratedTicket,
+  rawNote: string,
+  imageDescriptions: string[],
+  visualFindings: VisualFinding[]
+): GeneratedTicket {
+  const evidenceText = [rawNote, ...imageDescriptions].join("\n");
+  const highRiskLanguage = hasHighRiskLanguage(evidenceText);
+  const strongestEvidence = Math.max(
+    0,
+    ...visualFindings.map((finding) => finding.evidenceScore || 0)
+  );
+  const hasAcceptedFinding = visualFindings.some(
+    (finding) => finding.verification === "accepted"
+  );
+  const requiresVerification = visualFindings.some(
+    (finding) =>
+      finding.verification === "field_verify" ||
+      finding.confidence === "low" ||
+      (finding.qualityFlags?.length || 0) > 0
+  );
+  let severity = ticket.severity;
+  let likelihood = ticket.likelihood;
+  let verificationStatus = ticket.verification_status;
+  let recordkeepingNotes = ticket.recordkeeping_notes || "";
+
+  if (severity === "critical" && !highRiskLanguage) {
+    severity = "high";
+    recordkeepingNotes = appendNote(
+      recordkeepingNotes,
+      "Critical severity was reduced because the evidence does not indicate immediate shutdown or life-safety exposure."
+    );
+  }
+
+  if (
+    visualFindings.length > 0 &&
+    !hasAcceptedFinding &&
+    strongestEvidence < 0.52 &&
+    !highRiskLanguage
+  ) {
+    if (severity === "critical" || severity === "high") severity = "medium";
+    if (likelihood === "likely") likelihood = "possible";
+    recordkeepingNotes = appendNote(
+      recordkeepingNotes,
+      "Photo evidence is review-only; verify the condition in the field before assigning final corrective work."
+    );
+  }
+
+  if (requiresVerification && verificationStatus === "corrected_verified") {
+    verificationStatus = "corrected_not_verified";
+  }
+
+  if (
+    requiresVerification &&
+    !(ticket.corrective_action || "").toLowerCase().includes("verify")
+  ) {
+    ticket.corrective_action = appendNote(
+      ticket.corrective_action,
+      "Verify the condition at the asset or work area before closure."
+    );
+  }
+
+  return {
+    ...ticket,
+    severity,
+    likelihood,
+    verification_status: verificationStatus,
+    recordkeeping_notes: recordkeepingNotes,
+    visual_findings: visualFindings.length
+      ? visualFindings
+      : ticket.visual_findings || [],
+  };
 }
