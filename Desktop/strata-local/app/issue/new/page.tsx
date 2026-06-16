@@ -49,6 +49,31 @@ type VisualFinding = {
   } | null;
 };
 
+type TextEvidence = {
+  text: string;
+  kind:
+    | "asset_tag"
+    | "nameplate"
+    | "gauge"
+    | "label"
+    | "warning"
+    | "permit"
+    | "calibration"
+    | "inspection_tag"
+    | "signage"
+    | "other";
+  confidence: "low" | "medium" | "high";
+  source: "vision" | "ocr";
+  sourceModels?: string[];
+  fieldUse?: string;
+  bbox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+};
+
 type ImageQualityReport = {
   width: number;
   height: number;
@@ -68,6 +93,7 @@ type ImageDescription = {
   imageQuality?: ImageQualityReport;
   reviewNotes?: string[];
   visualFindings?: VisualFinding[];
+  textEvidence?: TextEvidence[];
 };
 
 type InspectionContext = {
@@ -607,6 +633,10 @@ export default function NewIssuePage() {
             (description: ImageDescription) =>
               description.visualFindings || []
           ),
+          textEvidence: descriptions.flatMap(
+            (description: ImageDescription) =>
+              description.textEvidence || []
+          ),
         }),
       });
 
@@ -1108,6 +1138,7 @@ export default function NewIssuePage() {
                         file={file}
                         quality={analysis?.imageQuality}
                         findings={analysis?.visualFindings || []}
+                        textEvidence={analysis?.textEvidence || []}
                       />
                     );
                   })}
@@ -1152,6 +1183,12 @@ export default function NewIssuePage() {
                                 finding={finding}
                               />
                             ))}
+                          </div>
+                        )}
+
+                        {!!item.textEvidence?.length && (
+                          <div className="mt-3">
+                            <TextEvidencePanel evidence={item.textEvidence} />
                           </div>
                         )}
 
@@ -1576,12 +1613,15 @@ function ImagePreview({
   file,
   quality,
   findings,
+  textEvidence,
 }: {
   file: UploadedFile;
   quality?: ImageQualityReport;
   findings: VisualFinding[];
+  textEvidence: TextEvidence[];
 }) {
   const boxedFindings = findings.filter((finding) => finding.bbox);
+  const boxedText = textEvidence.filter((item) => item.bbox);
 
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
@@ -1619,6 +1659,29 @@ function ImagePreview({
             >
               <span className="absolute left-0 top-0 max-w-full truncate bg-red-600 px-1 py-0.5 text-[10px] font-medium text-white">
                 {finding.label}
+              </span>
+            </div>
+          );
+        })}
+
+        {boxedText.map((item) => {
+          const bbox = item.bbox;
+          if (!bbox) return null;
+
+          return (
+            <div
+              key={`${item.kind}-${item.text}-${bbox.x}-${bbox.y}`}
+              className="absolute border-2 border-emerald-500 bg-emerald-500/10"
+              style={{
+                left: `${bbox.x * 100}%`,
+                top: `${bbox.y * 100}%`,
+                width: `${bbox.width * 100}%`,
+                height: `${bbox.height * 100}%`,
+              }}
+              title={`${item.kind}: ${item.text}`}
+            >
+              <span className="absolute left-0 top-0 max-w-full truncate bg-emerald-700 px-1 py-0.5 text-[10px] font-medium text-white">
+                {item.kind.replaceAll("_", " ")}
               </span>
             </div>
           );
@@ -1691,6 +1754,62 @@ function StateRow({
         <span className="text-slate-700">{label}</span>
       </div>
       <span className="max-w-36 truncate font-medium text-slate-950">{value}</span>
+    </div>
+  );
+}
+
+function TextEvidencePanel({ evidence }: { evidence: TextEvidence[] }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Tag size={14} className="text-emerald-700" />
+          <p className="text-xs font-medium uppercase text-slate-500">
+            Readable field text
+          </p>
+        </div>
+        <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-500">
+          {evidence.length} item{evidence.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {evidence.slice(0, 6).map((item) => (
+          <div
+            key={`${item.kind}-${item.text}`}
+            className="rounded-md border border-slate-200 bg-white px-3 py-2"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <p className="min-w-0 break-words text-sm font-semibold text-slate-950">
+                {item.text}
+              </p>
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${
+                  item.confidence === "high"
+                    ? "bg-emerald-100 text-emerald-800"
+                    : item.confidence === "medium"
+                    ? "bg-blue-100 text-blue-800"
+                    : "bg-amber-100 text-amber-900"
+                }`}
+              >
+                {item.confidence}
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-slate-500">
+              <span className="rounded bg-slate-100 px-1.5 py-0.5">
+                {item.kind.replaceAll("_", " ")}
+              </span>
+              <span className="rounded bg-slate-100 px-1.5 py-0.5">
+                {item.source}
+              </span>
+            </div>
+            {item.fieldUse && (
+              <p className="mt-2 text-xs leading-5 text-slate-600">
+                {item.fieldUse}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

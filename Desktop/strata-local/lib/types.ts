@@ -27,6 +27,31 @@ export type VisualFinding = {
   } | null;
 };
 
+export type TextEvidence = {
+  text: string;
+  kind:
+    | "asset_tag"
+    | "nameplate"
+    | "gauge"
+    | "label"
+    | "warning"
+    | "permit"
+    | "calibration"
+    | "inspection_tag"
+    | "signage"
+    | "other";
+  confidence: "low" | "medium" | "high";
+  source: "vision" | "ocr";
+  sourceModels?: string[];
+  fieldUse?: string;
+  bbox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+};
+
 export type Issue = {
   id: string;
   title: string;

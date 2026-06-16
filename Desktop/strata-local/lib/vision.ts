@@ -1,7 +1,8 @@
 import fs from "fs";
-import { VisualFinding } from "./types";
+import { TextEvidence, VisualFinding } from "./types";
 import { resolveVisionModels } from "./model-registry";
 import { ImageQualityReport, inspectImageQuality } from "./image-quality";
+import { extractTextEvidenceWithTesseract } from "./ocr";
 
 export type VisionAnalysis = {
   description: string;
@@ -11,6 +12,7 @@ export type VisionAnalysis = {
   imageQuality: ImageQualityReport;
   reviewNotes: string[];
   visualFindings: VisualFinding[];
+  textEvidence: TextEvidence[];
 };
 
 type RawVisualFinding = {
@@ -24,10 +26,19 @@ type RawVisualFinding = {
   bbox?: unknown;
 };
 
+type RawTextEvidence = {
+  text?: unknown;
+  kind?: unknown;
+  confidence?: unknown;
+  field_use?: unknown;
+  bbox?: unknown;
+};
+
 type ModelRun = {
   model: string;
   description: string;
   visualFindings: VisualFinding[];
+  textEvidence: TextEvidence[];
 };
 
 const ALLOWED_CATEGORIES = new Set([
@@ -54,6 +65,19 @@ const ALLOWED_CATEGORIES = new Set([
   "other",
 ]);
 
+const ALLOWED_TEXT_KINDS = new Set([
+  "asset_tag",
+  "nameplate",
+  "gauge",
+  "label",
+  "warning",
+  "permit",
+  "calibration",
+  "inspection_tag",
+  "signage",
+  "other",
+]);
+
 function asText(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
@@ -69,6 +93,13 @@ function asTextArray(value: unknown) {
 function normalizeCategory(value: unknown) {
   const category = asText(value, "other").toLowerCase();
   return ALLOWED_CATEGORIES.has(category) ? category : "other";
+}
+
+function normalizeTextKind(value: unknown): TextEvidence["kind"] {
+  const kind = asText(value, "other").toLowerCase();
+  return ALLOWED_TEXT_KINDS.has(kind)
+    ? (kind as TextEvidence["kind"])
+    : "other";
 }
 
 function normalizeBBox(value: unknown): VisualFinding["bbox"] {
@@ -128,17 +159,46 @@ function normalizeFinding(
   };
 }
 
+function normalizeTextEvidence(
+  evidence: RawTextEvidence,
+  sourceModel: string
+): TextEvidence | null {
+  const text = asText(evidence.text);
+  if (!text) return null;
+
+  const confidence = asText(evidence.confidence, "medium");
+  const normalizedConfidence =
+    confidence === "low" || confidence === "medium" || confidence === "high"
+      ? confidence
+      : "medium";
+
+  return {
+    text,
+    kind: normalizeTextKind(evidence.kind),
+    confidence: normalizedConfidence,
+    source: "vision",
+    sourceModels: [sourceModel],
+    fieldUse: asText(
+      evidence.field_use,
+      "Use as supporting readable text; verify critical tags or readings in the field."
+    ),
+    bbox: normalizeBBox(evidence.bbox),
+  };
+}
+
 function parseVisionResponse(
   responseText: string,
   sourceModel: string
 ): {
   description: string;
   visualFindings: VisualFinding[];
+  textEvidence: TextEvidence[];
 } {
   try {
     const parsed = JSON.parse(responseText) as {
       description?: unknown;
       visual_findings?: RawVisualFinding[];
+      text_evidence?: RawTextEvidence[];
     };
 
     return {
@@ -148,11 +208,17 @@ function parseVisionResponse(
             normalizeFinding(finding, sourceModel)
           )
         : [],
+      textEvidence: Array.isArray(parsed.text_evidence)
+        ? parsed.text_evidence
+            .map((evidence) => normalizeTextEvidence(evidence, sourceModel))
+            .filter((evidence): evidence is TextEvidence => Boolean(evidence))
+        : [],
     };
   } catch {
     return {
       description: responseText || "No clear maintenance issue visible.",
       visualFindings: [],
+      textEvidence: [],
     };
   }
 }
@@ -250,6 +316,76 @@ function mergeFindings(runs: ModelRun[], imageQuality: ImageQualityReport) {
     .sort((a, b) => (b.evidenceScore || 0) - (a.evidenceScore || 0));
 }
 
+function textConfidenceRank(confidence: TextEvidence["confidence"]) {
+  const ranks = {
+    low: 1,
+    medium: 2,
+    high: 3,
+  };
+
+  return ranks[confidence];
+}
+
+function textEvidenceKey(evidence: TextEvidence) {
+  return `${evidence.kind}:${evidence.text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+}
+
+function mergeTextEvidence(
+  runs: ModelRun[],
+  ocrEvidence: TextEvidence[],
+  imageQuality: ImageQualityReport
+) {
+  const merged = new Map<string, TextEvidence>();
+
+  for (const evidence of [
+    ...runs.flatMap((run) => run.textEvidence),
+    ...ocrEvidence,
+  ]) {
+    const key = textEvidenceKey(evidence);
+    if (!key.trim()) continue;
+
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, evidence);
+      continue;
+    }
+
+    const confidence =
+      textConfidenceRank(evidence.confidence) >
+      textConfidenceRank(current.confidence)
+        ? evidence.confidence
+        : current.confidence;
+
+    merged.set(key, {
+      ...current,
+      confidence,
+      source: current.source === evidence.source ? current.source : "vision",
+      sourceModels: Array.from(
+        new Set([
+          ...(current.sourceModels || []),
+          ...(evidence.sourceModels || []),
+        ])
+      ),
+      fieldUse: current.fieldUse || evidence.fieldUse,
+      bbox: current.bbox || evidence.bbox || null,
+    });
+  }
+
+  return Array.from(merged.values())
+    .map((evidence) => ({
+      ...evidence,
+      confidence:
+        imageQuality.status === "retake" && evidence.confidence === "high"
+          ? "medium"
+          : evidence.confidence,
+    }))
+    .sort(
+      (a, b) =>
+        textConfidenceRank(b.confidence) - textConfidenceRank(a.confidence)
+    )
+    .slice(0, 10);
+}
+
 function calibrateFinding(
   finding: VisualFinding,
   runCount: number,
@@ -322,7 +458,8 @@ function scoreAnalysis(
 function buildReviewNotes(
   runs: ModelRun[],
   findings: VisualFinding[],
-  imageQuality: ImageQualityReport
+  imageQuality: ImageQualityReport,
+  textEvidence: TextEvidence[]
 ) {
   const notes = [
     `Photo quality ${imageQuality.status}: ${imageQuality.width}x${imageQuality.height}, sharpness ${imageQuality.sharpness}, contrast ${imageQuality.contrast}.`,
@@ -332,6 +469,9 @@ function buildReviewNotes(
     `${findings.length} localized condition${
       findings.length === 1 ? "" : "s"
     } found in photo evidence.`,
+    `${textEvidence.length} readable text item${
+      textEvidence.length === 1 ? "" : "s"
+    } captured from labels, tags, signs, gauges, or nameplates.`,
   ];
 
   if (runs.length < 2) {
@@ -353,9 +493,19 @@ function buildReviewNotes(
   return notes;
 }
 
-function composeDescription(runs: ModelRun[], findings: VisualFinding[]) {
+function composeDescription(
+  runs: ModelRun[],
+  findings: VisualFinding[],
+  textEvidence: TextEvidence[]
+) {
   if (findings.length === 0) {
-    return runs[0]?.description || "No clear maintenance issue visible.";
+    const readableText = textEvidence.length
+      ? `\n\nReadable text: ${textEvidence
+          .slice(0, 6)
+          .map((item) => `${item.text} (${item.kind})`)
+          .join("; ")}`
+      : "";
+    return `${runs[0]?.description || "No clear maintenance issue visible."}${readableText}`;
   }
 
   const sourceSummary = runs
@@ -369,7 +519,14 @@ function composeDescription(runs: ModelRun[], findings: VisualFinding[]) {
     )
     .join(" ");
 
-  return `${findingSummary}\n\nPhoto observations:\n${sourceSummary}`;
+  const readableText = textEvidence.length
+    ? `\n\nReadable text: ${textEvidence
+        .slice(0, 6)
+        .map((item) => `${item.text} (${item.kind})`)
+        .join("; ")}`
+    : "";
+
+  return `${findingSummary}${readableText}\n\nPhoto observations:\n${sourceSummary}`;
 }
 
 function buildPrompt(userNote?: string) {
@@ -389,6 +546,8 @@ Accuracy rules:
 - Return visible_evidence as short concrete cues such as "wet floor", "open panel", "missing guard", or "blocked extinguisher".
 - recommended_verification should be the field check needed to confirm the condition.
 - action_hint should be the first practical operations or maintenance step.
+- Extract readable text separately from visual findings. Include asset tags, serial numbers, nameplates, gauge readings, inspection tags, calibration stickers, permits, warning labels, fire/egress signs, chemical labels, and posted PPE requirements when legible.
+- Do not treat readable text alone as proof of a hazardous condition.
 
 Industrial checklist:
 - Housekeeping and walking-working surfaces: wet floors, poor drainage, debris, blocked walkways, floor holes, damaged stairs/rails, slip/trip/fall hazards.
@@ -413,13 +572,23 @@ Return only valid JSON:
       "action_hint": "first practical next step",
       "bbox": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.2}
     }
+  ],
+  "text_evidence": [
+    {
+      "text": "exact readable text",
+      "kind": "asset_tag | nameplate | gauge | label | warning | permit | calibration | inspection_tag | signage | other",
+      "confidence": "low | medium | high",
+      "field_use": "how this text helps the inspector",
+      "bbox": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.2}
+    }
   ]
 }
 
 If there is no clear issue, return:
 {
   "description": "No clear maintenance issue visible.",
-  "visual_findings": []
+  "visual_findings": [],
+  "text_evidence": []
 }
 
 User note:
@@ -477,8 +646,33 @@ async function runVisionModel(
               required: ["label", "observation", "category", "confidence"],
             },
           },
+          text_evidence: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                text: { type: "string" },
+                kind: { type: "string" },
+                confidence: {
+                  type: "string",
+                  enum: ["low", "medium", "high"],
+                },
+                field_use: { type: "string" },
+                bbox: {
+                  type: "object",
+                  properties: {
+                    x: { type: "number" },
+                    y: { type: "number" },
+                    width: { type: "number" },
+                    height: { type: "number" },
+                  },
+                },
+              },
+              required: ["text", "kind", "confidence"],
+            },
+          },
         },
-        required: ["description", "visual_findings"],
+        required: ["description", "visual_findings", "text_evidence"],
       },
       options: {
         temperature: 0,
@@ -498,6 +692,7 @@ async function runVisionModel(
     model,
     description: parsed.description,
     visualFindings: parsed.visualFindings,
+    textEvidence: parsed.textEvidence,
   };
 }
 
@@ -509,18 +704,25 @@ export async function analyzeImageWithOllama(
     throw new Error(`Image not found at path: ${imagePath}`);
   }
 
-  const [imageBase64, imageQuality] = await Promise.all([
+  const [imageBase64, imageQuality, ocrResult] = await Promise.allSettled([
     fs.promises.readFile(imagePath).then((file) => file.toString("base64")),
     inspectImageQuality(imagePath),
+    extractTextEvidenceWithTesseract(imagePath),
   ]);
-  const requestedLimit = Number(process.env.STRATA_VISION_ENSEMBLE || "3");
-  const models = await resolveVisionModels(
-    Number.isFinite(requestedLimit) ? Math.max(1, requestedLimit) : 2
-  );
+
+  if (imageBase64.status === "rejected") {
+    throw imageBase64.reason;
+  }
+
+  if (imageQuality.status === "rejected") {
+    throw imageQuality.reason;
+  }
+
+  const models = await resolveVisionModels();
 
   if (models.length === 0) {
     throw new Error(
-      "No local vision models are installed. Pull qwen2.5vl:7b, gemma3:12b, llama3.2-vision, or llava:7b with Ollama."
+      "No local vision models are installed. Pull qwen3-vl:32b, qwen2.5vl:32b, gemma3:27b, or qwen2.5vl:7b with Ollama."
     );
   }
 
@@ -529,7 +731,7 @@ export async function analyzeImageWithOllama(
 
   for (const model of models) {
     try {
-      runs.push(await runVisionModel(model.installedName, imageBase64, userNote));
+      runs.push(await runVisionModel(model.installedName, imageBase64.value, userNote));
     } catch (error: unknown) {
       errors.push(
         `${model.installedName}: ${
@@ -545,9 +747,27 @@ export async function analyzeImageWithOllama(
     );
   }
 
-  const visualFindings = mergeFindings(runs, imageQuality);
-  const analysisConfidence = scoreAnalysis(runs, visualFindings, imageQuality);
-  const reviewNotes = buildReviewNotes(runs, visualFindings, imageQuality);
+  const textEvidence = mergeTextEvidence(
+    runs,
+    ocrResult.status === "fulfilled" ? ocrResult.value : [],
+    imageQuality.value
+  );
+  const visualFindings = mergeFindings(runs, imageQuality.value);
+  const analysisConfidence = scoreAnalysis(
+    runs,
+    visualFindings,
+    imageQuality.value
+  );
+  const reviewNotes = buildReviewNotes(
+    runs,
+    visualFindings,
+    imageQuality.value,
+    textEvidence
+  );
+
+  if (ocrResult.status === "rejected") {
+    reviewNotes.push("OCR text extraction was unavailable; readable labels should be checked manually.");
+  }
 
   if (errors.length) {
     reviewNotes.push(
@@ -556,12 +776,13 @@ export async function analyzeImageWithOllama(
   }
 
   return {
-    description: composeDescription(runs, visualFindings),
+    description: composeDescription(runs, visualFindings, textEvidence),
     model: runs.map((run) => run.model).join(" + "),
     modelsUsed: runs.map((run) => run.model),
     analysisConfidence,
-    imageQuality,
+    imageQuality: imageQuality.value,
     reviewNotes,
     visualFindings,
+    textEvidence,
   };
 }

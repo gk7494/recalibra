@@ -1,4 +1,4 @@
-import { GeneratedTicket, VisualFinding } from "./types";
+import { GeneratedTicket, TextEvidence, VisualFinding } from "./types";
 import { resolveTicketModels, resolveVisionModels } from "./model-registry";
 
 export async function describeImageWithLlava(
@@ -44,7 +44,8 @@ export async function generateTicketWithOllama(
   rawNote: string,
   imageDescriptions: string[] = [],
   historicalInspectionContext = "",
-  visualFindings: VisualFinding[] = []
+  visualFindings: VisualFinding[] = [],
+  textEvidence: TextEvidence[] = []
 ): Promise<GeneratedTicket> {
   const schema = {
     type: "object",
@@ -173,6 +174,7 @@ Inputs:
 2. Image-evidence descriptions from uploaded photos
 3. Historical industrial inspection context and similar prior records
 4. Structured visual findings with optional bounding boxes
+5. Readable text extracted from labels, tags, signs, gauges, and nameplates
 
 Rules:
 - Return only valid JSON.
@@ -202,6 +204,8 @@ Rules:
 - corrective_action should be the durable fix to verify later.
 - visual_findings should copy the provided structured visual findings when useful; keep bounding boxes unchanged.
 - Keep visibleEvidence, recommendedVerification, actionHint, verification, evidenceScore, and qualityFlags when provided.
+- Use readable text to populate asset tags, nameplate context, gauge readings, inspection/calibration labels, permits, warnings, signage, or HazCom labels when useful.
+- Do not treat readable text by itself as proof of a defect; it is supporting evidence and must be tied to the field note or visible condition.
 
 Categories:
 - leak
@@ -246,6 +250,13 @@ ${
     ? JSON.stringify(visualFindings, null, 2)
     : "None"
 }
+
+Readable text evidence:
+${
+  textEvidence.length
+    ? JSON.stringify(textEvidence, null, 2)
+    : "None"
+}
 `;
 
   const models = await resolveTicketModels();
@@ -281,7 +292,8 @@ ${
         JSON.parse(data.response),
         rawNote,
         imageDescriptions,
-        visualFindings
+        visualFindings,
+        textEvidence
       );
     } catch {
       console.error("Bad model response:", data.response);
@@ -331,9 +343,14 @@ function calibrateGeneratedTicket(
   ticket: GeneratedTicket,
   rawNote: string,
   imageDescriptions: string[],
-  visualFindings: VisualFinding[]
+  visualFindings: VisualFinding[],
+  textEvidence: TextEvidence[] = []
 ): GeneratedTicket {
-  const evidenceText = [rawNote, ...imageDescriptions].join("\n");
+  const evidenceText = [
+    rawNote,
+    ...imageDescriptions,
+    ...textEvidence.map((item) => item.text),
+  ].join("\n");
   const highRiskLanguage = hasHighRiskLanguage(evidenceText);
   const strongestEvidence = Math.max(
     0,

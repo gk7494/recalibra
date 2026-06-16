@@ -28,11 +28,34 @@ export type ModelCandidate = {
 
 export const VISION_MODEL_CANDIDATES: ModelCandidate[] = [
   {
+    name: "qwen3-vl:32b",
+    label: "Qwen3-VL 32B",
+    task: "vision",
+    tier: "best",
+  },
+  {
+    name: "qwen3-vl:30b",
+    label: "Qwen3-VL 30B",
+    task: "vision",
+    tier: "best",
+  },
+  {
+    name: "qwen3-vl:8b",
+    label: "Qwen3-VL 8B",
+    task: "vision",
+    tier: "balanced",
+  },
+  {
+    name: "qwen3-vl:4b",
+    label: "Qwen3-VL 4B",
+    task: "vision",
+    tier: "balanced",
+  },
+  {
     name: "qwen2.5vl:32b",
     label: "Qwen2.5-VL 32B",
     task: "vision",
     tier: "best",
-    defaultEnabled: false,
   },
   {
     name: "gemma3:27b",
@@ -196,7 +219,12 @@ export function getDefaultVisionCandidates() {
   );
 }
 
-export async function resolveVisionModels(limit = 2) {
+export function getDefaultVisionModelLimit() {
+  const requestedLimit = Number(process.env.STRATA_VISION_ENSEMBLE || "3");
+  return Number.isFinite(requestedLimit) ? Math.max(1, requestedLimit) : 3;
+}
+
+export async function resolveVisionModels(limit = getDefaultVisionModelLimit()) {
   const installed = await getInstalledOllamaModels();
   return pickInstalledCandidates(installed, getDefaultVisionCandidates()).slice(
     0,

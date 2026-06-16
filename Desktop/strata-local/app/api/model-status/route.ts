@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getDefaultVisionCandidates,
+  getDefaultVisionModelLimit,
   getInstalledOllamaModels,
   pickInstalledCandidates,
   TICKET_MODEL_CANDIDATES,
@@ -27,7 +28,7 @@ export async function GET() {
     return NextResponse.json({
       installed,
       selected: {
-        vision: selectedVisionModels.slice(0, 2),
+        vision: selectedVisionModels.slice(0, getDefaultVisionModelLimit()),
         ticket: ticketModels.slice(0, 1),
       },
       available: {

@@ -5,7 +5,7 @@ import {
   buildHistoricalInspectionContext,
   formatHistoricalInspectionContext,
 } from "@/lib/inspection-history";
-import { Issue, VisualFinding } from "@/lib/types";
+import { Issue, TextEvidence, VisualFinding } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
     const rawNote = body.rawNote || "";
     const imageDescriptions: string[] = body.imageDescriptions || [];
     const visualFindings: VisualFinding[] = body.visualFindings || [];
+    const textEvidence: TextEvidence[] = body.textEvidence || [];
 
     if (!rawNote.trim() && imageDescriptions.length === 0) {
       return NextResponse.json(
@@ -37,7 +38,8 @@ export async function POST(req: NextRequest) {
       rawNote,
       imageDescriptions,
       inspectionContextText,
-      visualFindings
+      visualFindings,
+      textEvidence
     );
 
     return NextResponse.json({ ticket, inspectionContext });
