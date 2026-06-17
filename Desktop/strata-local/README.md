@@ -26,15 +26,21 @@ ollama pull gpt-oss:20b
 
 The default photo-analysis ensemble uses the best three installed vision models.
 
-## Docker / GPU Worker Mode
+## Docker Worker Mode
 
-For a pilot with a GPU workstation or GPU VM, keep a warm Ollama worker running instead of starting a new container for every photo.
+Keep a warm Ollama worker running instead of starting a new container for every photo. On this laptop, use the regular worker. On an NVIDIA GPU workstation or GPU VM, use the GPU override.
+
+```bash
+npm run model:worker
+```
+
+For a GPU host:
 
 ```bash
 npm run model:gpu
 ```
 
-The worker listens on `http://localhost:11435` and pulls:
+The worker listens on `http://localhost:11435`, reuses the host `~/.ollama` model cache, and ensures these models are present:
 
 ```text
 qwen3-vl:32b qwen2.5vl:32b gemma3:27b gpt-oss:20b
@@ -61,6 +67,8 @@ Useful commands:
 ```bash
 npm run model:gpu:logs
 npm run model:gpu:down
+npm run model:worker:logs
+npm run model:worker:down
 ```
 
 Notes:

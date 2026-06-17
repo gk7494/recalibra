@@ -7,9 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "model:gpu": "docker compose -f docker-compose.inference.yml up -d",
-    "model:gpu:logs": "docker compose -f docker-compose.inference.yml logs -f strata-ollama-gpu",
-    "model:gpu:down": "docker compose -f docker-compose.inference.yml down"
+    "model:worker": "docker compose -f docker-compose.inference.yml up -d",
+    "model:worker:logs": "docker compose -f docker-compose.inference.yml logs -f strata-ollama-worker",
+    "model:worker:down": "docker compose -f docker-compose.inference.yml down",
+    "model:gpu": "docker compose -f docker-compose.inference.yml -f docker-compose.gpu.yml up -d",
+    "model:gpu:logs": "docker compose -f docker-compose.inference.yml -f docker-compose.gpu.yml logs -f strata-ollama-worker",
+    "model:gpu:down": "docker compose -f docker-compose.inference.yml -f docker-compose.gpu.yml down"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.1",
