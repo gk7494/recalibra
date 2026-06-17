@@ -54,7 +54,7 @@ type Issue = {
 type ModelStatus = {
   backend?: {
     vision?: {
-      mode: "local" | "docker" | "remote";
+      mode: "local" | "worker" | "docker" | "remote";
       baseUrl: string;
     };
   };
@@ -242,6 +242,13 @@ export default function DashboardPage() {
             >
               <FilePlus2 size={16} />
               New field record
+            </Link>
+            <Link
+              href="/model-worker"
+              className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-zinc-300 hover:bg-white/10 hover:text-white"
+            >
+              <RadioTower size={16} />
+              Model worker
             </Link>
           </nav>
 
@@ -809,8 +816,9 @@ function severityRank(severity: IssueSeverity) {
   return ranks[severity];
 }
 
-function formatBackendMode(mode: "local" | "docker" | "remote") {
+function formatBackendMode(mode: "local" | "worker" | "docker" | "remote") {
   if (mode === "docker") return "Docker worker";
+  if (mode === "worker") return "Model worker";
   if (mode === "remote") return "GPU worker";
   return "Local";
 }

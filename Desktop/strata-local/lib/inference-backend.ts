@@ -1,6 +1,7 @@
 export type OllamaTask = "vision" | "ticket" | "report";
 
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
+const DEFAULT_VISION_WORKER_BASE_URL = "http://localhost:11435";
 
 function normalizeBaseUrl(value?: string) {
   return (value || DEFAULT_OLLAMA_BASE_URL).replace(/\/+$/, "");
@@ -10,7 +11,8 @@ export function getOllamaBaseUrl(task: OllamaTask = "vision") {
   if (task === "vision") {
     return normalizeBaseUrl(
       process.env.STRATA_VISION_OLLAMA_BASE_URL ||
-        process.env.STRATA_OLLAMA_BASE_URL
+        process.env.STRATA_OLLAMA_BASE_URL ||
+        DEFAULT_VISION_WORKER_BASE_URL
     );
   }
 
@@ -35,11 +37,14 @@ export function getOllamaBackendInfo(task: OllamaTask = "vision") {
     baseUrl.includes("127.0.0.1") ||
     baseUrl.includes("::1");
   const isDocker = baseUrl.includes("host.docker.internal");
+  const isWorker =
+    baseUrl.includes("localhost:11435") ||
+    baseUrl.includes("127.0.0.1:11435");
 
   return {
     task,
     baseUrl,
-    mode: isDocker ? "docker" : isLocal ? "local" : "remote",
+    mode: isDocker ? "docker" : isWorker ? "worker" : isLocal ? "local" : "remote",
   };
 }
 
