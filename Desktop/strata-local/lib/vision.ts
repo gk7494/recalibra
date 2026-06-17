@@ -3,6 +3,8 @@ import { TextEvidence, VisualFinding } from "./types";
 import { resolveVisionModels } from "./model-registry";
 import { ImageQualityReport, inspectImageQuality } from "./image-quality";
 import { extractTextEvidenceWithTesseract } from "./ocr";
+import { getOllamaBackendInfo, ollamaFetch } from "./inference-backend";
+import { ensureDockerVisionWorkerStarted } from "./docker-worker";
 
 export type VisionAnalysis = {
   description: string;
@@ -601,7 +603,7 @@ async function runVisionModel(
   imageBase64: string,
   userNote?: string
 ): Promise<ModelRun> {
-  const response = await fetch("http://localhost:11434/api/generate", {
+  const response = await ollamaFetch("vision", "/api/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -718,11 +720,13 @@ export async function analyzeImageWithOllama(
     throw imageQuality.reason;
   }
 
+  await ensureDockerVisionWorkerStarted();
   const models = await resolveVisionModels();
 
   if (models.length === 0) {
+    const backend = getOllamaBackendInfo("vision");
     throw new Error(
-      "No local vision models are installed. Pull qwen3-vl:32b, qwen2.5vl:32b, gemma3:27b, or qwen2.5vl:7b with Ollama."
+      `No vision models are available from ${backend.baseUrl}. Pull qwen3-vl:32b, qwen2.5vl:32b, gemma3:27b, or qwen2.5vl:7b with Ollama, or set STRATA_VISION_OLLAMA_BASE_URL to a GPU worker.`
     );
   }
 

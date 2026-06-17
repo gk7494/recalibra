@@ -1,3 +1,5 @@
+import { OllamaTask, getOllamaBaseUrl, ollamaFetch } from "./inference-backend";
+
 type OllamaTag = {
   name?: string;
   model?: string;
@@ -122,12 +124,13 @@ export const TICKET_MODEL_CANDIDATES: ModelCandidate[] = [
   },
 ];
 
-let installedModelCache:
-  | {
-      expiresAt: number;
-      models: LocalModelInfo[];
-    }
-  | null = null;
+const installedModelCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    models: LocalModelInfo[];
+  }
+>();
 
 function normalizeModelName(value: string) {
   return value.trim().toLowerCase();
@@ -148,12 +151,17 @@ function modelMatches(installedName: string, candidateName: string) {
   return false;
 }
 
-export async function getInstalledOllamaModels(): Promise<LocalModelInfo[]> {
-  if (installedModelCache && installedModelCache.expiresAt > Date.now()) {
-    return installedModelCache.models;
+export async function getInstalledOllamaModels(
+  task: OllamaTask = "vision"
+): Promise<LocalModelInfo[]> {
+  const cacheKey = `${task}:${getOllamaBaseUrl(task)}`;
+  const cached = installedModelCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.models;
   }
 
-  const response = await fetch("http://localhost:11434/api/tags", {
+  const response = await ollamaFetch(task, "/api/tags", {
     method: "GET",
   });
 
@@ -172,10 +180,10 @@ export async function getInstalledOllamaModels(): Promise<LocalModelInfo[]> {
     }))
     .filter((model) => model.name);
 
-  installedModelCache = {
+  installedModelCache.set(cacheKey, {
     expiresAt: Date.now() + 30_000,
     models,
-  };
+  });
 
   return models;
 }
@@ -225,7 +233,7 @@ export function getDefaultVisionModelLimit() {
 }
 
 export async function resolveVisionModels(limit = getDefaultVisionModelLimit()) {
-  const installed = await getInstalledOllamaModels();
+  const installed = await getInstalledOllamaModels("vision");
   return pickInstalledCandidates(installed, getDefaultVisionCandidates()).slice(
     0,
     limit
@@ -233,6 +241,6 @@ export async function resolveVisionModels(limit = getDefaultVisionModelLimit()) 
 }
 
 export async function resolveTicketModels() {
-  const installed = await getInstalledOllamaModels();
+  const installed = await getInstalledOllamaModels("ticket");
   return pickInstalledCandidates(installed, TICKET_MODEL_CANDIDATES);
 }

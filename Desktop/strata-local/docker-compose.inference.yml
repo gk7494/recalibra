@@ -1,0 +1,25 @@
+services:
+  strata-ollama-gpu:
+    image: ollama/ollama:latest
+    container_name: strata-ollama-gpu
+    restart: unless-stopped
+    ports:
+      - "11435:11434"
+    volumes:
+      - strata-ollama-models:/root/.ollama
+      - ./docker/start-ollama-worker.sh:/opt/strata/start-ollama-worker.sh:ro
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-2}"
+      STRATA_PULL_MODELS: "${STRATA_PULL_MODELS:-qwen3-vl:32b qwen2.5vl:32b gemma3:27b gpt-oss:20b}"
+    entrypoint: ["/bin/sh", "/opt/strata/start-ollama-worker.sh"]
+    gpus: all
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  strata-ollama-models:

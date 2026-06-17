@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "model:gpu": "docker compose -f docker-compose.inference.yml up -d",
+    "model:gpu:logs": "docker compose -f docker-compose.inference.yml logs -f strata-ollama-gpu",
+    "model:gpu:down": "docker compose -f docker-compose.inference.yml down"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.1",

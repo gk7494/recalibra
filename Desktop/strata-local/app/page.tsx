@@ -51,6 +51,21 @@ type Issue = {
   updated_at?: string;
 };
 
+type ModelStatus = {
+  backend?: {
+    vision?: {
+      mode: "local" | "docker" | "remote";
+      baseUrl: string;
+    };
+  };
+  selected?: {
+    vision?: Array<{
+      label: string;
+      installedName: string;
+    }>;
+  };
+};
+
 const filterLabels: Record<FilterKey, string> = {
   all: "All",
   open: "Open",
@@ -63,6 +78,7 @@ const filterLabels: Record<FilterKey, string> = {
 export default function DashboardPage() {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
 
@@ -85,6 +101,31 @@ export default function DashboardPage() {
     }
 
     fetchIssues();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function fetchModelStatus() {
+      try {
+        const res = await fetch("/api/model-status");
+        const data = await res.json();
+
+        if (!ignore && res.ok) {
+          setModelStatus(data);
+        }
+      } catch {
+        if (!ignore) {
+          setModelStatus(null);
+        }
+      }
+    }
+
+    fetchModelStatus();
 
     return () => {
       ignore = true;
@@ -161,6 +202,12 @@ export default function DashboardPage() {
     .slice()
     .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))
     .slice(0, 4);
+  const visionBackendMode = modelStatus?.backend?.vision?.mode;
+  const visionModel = modelStatus?.selected?.vision?.[0]?.label;
+  const photoProcessingStatus =
+    visionBackendMode && visionModel
+      ? `${formatBackendMode(visionBackendMode)} / ${visionModel}`
+      : "Checking";
 
   return (
     <main className="min-h-screen bg-[#edf1ef] text-zinc-950">
@@ -203,7 +250,7 @@ export default function DashboardPage() {
               Station status
             </p>
             <div className="mt-4 space-y-3 text-sm">
-              <SystemRow label="Photo processing" value="Available" />
+              <SystemRow label="Photo processing" value={photoProcessingStatus} positive />
               <SystemRow label="Records" value="Local database" />
               <SystemRow label="Connectivity" value="Offline ready" positive />
             </div>
@@ -760,6 +807,12 @@ function severityRank(severity: IssueSeverity) {
   };
 
   return ranks[severity];
+}
+
+function formatBackendMode(mode: "local" | "docker" | "remote") {
+  if (mode === "docker") return "Docker worker";
+  if (mode === "remote") return "GPU worker";
+  return "Local";
 }
 
 function formatAge(value: string) {

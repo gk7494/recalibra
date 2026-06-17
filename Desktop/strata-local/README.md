@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Strata Local
 
-## Getting Started
+Strata is a local-first industrial inspection and corrective-action register. It captures field notes, photos, camera images, live/audio transcription, image evidence, OCR text from labels/tags/nameplates, and structured report fields.
 
-First, run the development server:
+## Run the App
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev -- -p 3001
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3001.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Local Model Mode
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+By default Strata uses Ollama on `http://localhost:11434`.
 
-## Learn More
+Recommended local models:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+ollama pull qwen3-vl:32b
+ollama pull qwen2.5vl:32b
+ollama pull gemma3:27b
+ollama pull gpt-oss:20b
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The default photo-analysis ensemble uses the best three installed vision models.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Docker / GPU Worker Mode
 
-## Deploy on Vercel
+For a pilot with a GPU workstation or GPU VM, keep a warm Ollama worker running instead of starting a new container for every photo.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run model:gpu
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The worker listens on `http://localhost:11435` and pulls:
+
+```text
+qwen3-vl:32b qwen2.5vl:32b gemma3:27b gpt-oss:20b
+```
+
+Then restart the Next.js app with:
+
+```bash
+STRATA_VISION_OLLAMA_BASE_URL=http://localhost:11435 npm run dev -- -p 3001
+```
+
+To let the app start the worker on the first photo-analysis request, restart with:
+
+```bash
+STRATA_VISION_OLLAMA_BASE_URL=http://localhost:11435 \
+STRATA_AUTO_START_DOCKER_WORKER=true \
+npm run dev -- -p 3001
+```
+
+This still uses a warm worker model: the first request may start Docker, but subsequent photos reuse the running container.
+
+Useful commands:
+
+```bash
+npm run model:gpu:logs
+npm run model:gpu:down
+```
+
+Notes:
+
+- Docker GPU mode requires a Docker host with GPU support, such as NVIDIA Container Toolkit on Linux.
+- Docker Desktop on a Mac usually will not expose NVIDIA GPUs to containers.
+- Claude is not a local Docker model; it is a hosted API service. Use the Ollama worker path for private/local GPU inference.
+
+## Remote GPU Worker
+
+If the model runs on another machine:
+
+```bash
+STRATA_VISION_OLLAMA_BASE_URL=http://gpu-worker.example.com:11434 npm run dev -- -p 3001
+```
+
+Ticket/report generation can stay local or use separate endpoints:
+
+```bash
+STRATA_TICKET_OLLAMA_BASE_URL=http://localhost:11434
+STRATA_REPORT_OLLAMA_BASE_URL=http://localhost:11434
+```
+
+## Checks
+
+```bash
+npm run lint
+npm run build
+curl -s http://localhost:3001/api/model-status
+```

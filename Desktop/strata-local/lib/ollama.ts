@@ -1,5 +1,6 @@
 import { GeneratedTicket, TextEvidence, VisualFinding } from "./types";
 import { resolveTicketModels, resolveVisionModels } from "./model-registry";
+import { getOllamaBackendInfo, ollamaFetch } from "./inference-backend";
 
 export async function describeImageWithLlava(
   imageBase64: string
@@ -8,7 +9,7 @@ export async function describeImageWithLlava(
   const models = await resolveVisionModels(1);
 
   for (const model of models) {
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const response = await ollamaFetch("vision", "/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -34,9 +35,11 @@ export async function describeImageWithLlava(
     return data.response || "";
   }
 
+  const backend = getOllamaBackendInfo("vision");
+
   throw new Error(
     lastError ||
-      "Ollama vision request failed. Make sure qwen2.5vl:7b, gemma3:12b, llama3.2-vision, or llava:7b is pulled."
+      `Ollama vision request failed at ${backend.baseUrl}. Make sure qwen3-vl:32b, qwen2.5vl:32b, gemma3:27b, or qwen2.5vl:7b is pulled.`
   );
 }
 
@@ -263,7 +266,7 @@ ${
   let lastError = "";
 
   for (const model of models) {
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const response = await ollamaFetch("ticket", "/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -301,8 +304,11 @@ ${
     }
   }
 
+  const backend = getOllamaBackendInfo("ticket");
+
   throw new Error(
-    lastError || "Ollama request failed. Make sure Ollama is running."
+    lastError ||
+      `Ollama ticket request failed at ${backend.baseUrl}. Make sure the model worker is running.`
   );
 }
 

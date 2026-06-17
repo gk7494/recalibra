@@ -7,26 +7,37 @@ import {
   TICKET_MODEL_CANDIDATES,
   VISION_MODEL_CANDIDATES,
 } from "@/lib/model-registry";
+import { getOllamaBackendInfo } from "@/lib/inference-backend";
 
 export async function GET() {
   try {
-    const installed = await getInstalledOllamaModels();
+    const [visionInstalled, ticketInstalled] = await Promise.all([
+      getInstalledOllamaModels("vision"),
+      getInstalledOllamaModels("ticket"),
+    ]);
     const defaultVisionCandidates = getDefaultVisionCandidates();
     const selectedVisionModels = pickInstalledCandidates(
-      installed,
+      visionInstalled,
       defaultVisionCandidates
     );
     const visionModels = pickInstalledCandidates(
-      installed,
+      visionInstalled,
       VISION_MODEL_CANDIDATES
     );
     const ticketModels = pickInstalledCandidates(
-      installed,
+      ticketInstalled,
       TICKET_MODEL_CANDIDATES
     );
 
     return NextResponse.json({
-      installed,
+      backend: {
+        vision: getOllamaBackendInfo("vision"),
+        ticket: getOllamaBackendInfo("ticket"),
+      },
+      installed: {
+        vision: visionInstalled,
+        ticket: ticketInstalled,
+      },
       selected: {
         vision: selectedVisionModels.slice(0, getDefaultVisionModelLimit()),
         ticket: ticketModels.slice(0, 1),
